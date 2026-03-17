@@ -89,3 +89,32 @@ PLAN.md・MANUAL.mdの変更点:
 - **管理者アカウントへの依存を削減**: Node.jsのインストール・アップデートがclaw自身で完結
 - **systemPromptにmise情報を追加**: エージェントがmiseの存在を認識し、ランタイムの追加・更新を自分で実行できるよう明示
 - **brew関連の記述を整理**: clawアカウントにはbrewが存在しないことを明確化
+
+## 2026-03-18
+
+### ワークスペースをGoogle Drive共有フォルダ方式に変更
+
+ユーザーの提案により、ワークスペースの共有方式を見直し。
+
+動機:
+- `/opt/openclaw/workspace/` はホームディレクトリ外にあり、ACL設定が複雑
+- 個人PCとMac Mini間でファイルを共有するシンプルな方法が必要
+- git管理を個人PC側に集約したい
+
+設計:
+- Open Claw専用のGoogleアカウントを作成
+- 個人のGoogle Driveにワークスペースフォルダを作成し、Open Clawアカウントを「編集者」として招待
+- Mac Mini（clawアカウント）ではGoogle Drive for Desktopにサインインし、共有フォルダをミラーリングモードで同期
+- git管理は個人PC側のみ。普通に `git init` する（Mac Mini側のエージェントはgitを使わないため、`.git`が同期されても問題なし）
+
+PLAN.md・MANUAL.mdの変更点:
+- **ディレクトリ構成**: `/opt/openclaw/workspace/` → Google Drive共有フォルダ
+- **Phase 3.4を置き換え**: 共有ディレクトリ作成+ACL → Google Drive for Desktopインストール（`brew install --cask google-drive`）
+- **Phase 3.5を新設**: Open ClawアカウントでGoogle Driveにサインイン、ミラーリング設定
+- **Phase番号を繰り下げ**: mise (3.6), Node.js (3.7), 制限確認 (3.8)
+- **agent.workspace**: Google Drive共有フォルダのパスに変更
+- **systemPrompt**: ワークスペースの説明をGoogle Drive共有フォルダに更新
+- **運用ガイド - バージョン管理**: 管理者のgit操作 → 個人PCでの通常の `git init` に変更
+- **再起動手順**: Google Driveの同期確認ステップを追加
+- **セキュリティチェックリスト**: `/opt/openclaw/workspace/` 関連 → Google Drive関連に置き換え
+- **前提条件**: Open Claw専用Googleアカウントと共有フォルダの事前準備を追加

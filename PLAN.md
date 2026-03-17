@@ -22,11 +22,19 @@ Mac MiniにOpenClawを最もセキュアな方法でインストールし、Tele
 | パス | 内容 | アクセス |
 |------|------|---------|
 | `/Users/claw/.openclaw/` | 設定、認証、セッション等（デフォルト） | claw のみ（管理者は sudo） |
-| `/opt/openclaw/workspace/` | エージェントの作業ディレクトリ（git管理） | claw + 管理者 |
+| `~/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace/` | エージェントの作業ディレクトリ（Google Drive同期） | claw（Google Drive経由で個人PCと共有） |
 
 - `~/.openclaw/` はデフォルトの場所に維持（機密データを含むため mode 700 のホームディレクトリ内が適切）
-- `agent.workspace` を `/opt/openclaw/workspace/` に設定し、管理者が sudo なしで git 操作できるようにする
+- `agent.workspace` をGoogle Drive内の共有フォルダに設定
 - `openclaw.json` はシークレットを含まない設計のためバージョン管理可能（ただし変更頻度が低いため管理者が sudo で直接編集する運用）
+
+### ワークスペース共有方式: Google Drive共有フォルダ
+
+- Open Claw専用のGoogleアカウントを作成
+- 個人のGoogle Driveにワークスペースフォルダを作成し、Open Clawアカウントを「編集者」として招待
+- Mac Mini（clawアカウント）ではGoogle Drive for Desktopにサインインし、共有フォルダをミラーリングモードで同期
+- git管理は個人PC側のみで行う（普通に `git init`。Mac Mini側のエージェントはgitを使わないため、`.git`が同期されても問題なし）
+- Google Driveのインストールは管理者アカウントでbrew経由
 
 ## セキュリティ方針
 
@@ -71,6 +79,7 @@ Mac MiniにOpenClawを最もセキュアな方法でインストールし、Tele
 6. [x] LOG.md作成
 7. [x] 専用標準アカウント `claw` 方針への移行（PLAN.md, MANUAL.md, LOG.md更新）
 8. [x] ワークスペースを `/opt/openclaw/workspace/` に変更（agent.workspace設定、バージョン管理方針）
+9. [x] ワークスペースをGoogle Drive共有フォルダ方式に変更（/opt/openclaw/workspace/ → Google Drive、個人PC側でgit管理）
 
 ## 参考資料
 

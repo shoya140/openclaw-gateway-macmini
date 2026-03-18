@@ -69,6 +69,18 @@ Mac MiniにOpenClawを最もセキュアな方法でインストールし、Tele
 - 設定ファイル: mode 600
 - APIキーはauth profilesまたは環境変数で管理（設定ファイルに直書きしない）
 
+## プロジェクト構成
+
+```
+scripts/
+  01-admin-macos-setup.sh     # 管理者: macOSセキュリティ + Tailscale + clawアカウント
+  02-claw-user-setup.sh       # claw: Google Drive + mise + Node.js
+  03-openclaw-setup.sh        # claw: OpenClawインストール・設定（--reinitで再インストール可）
+README.md                     # セットアップガイド + 運用マニュアル
+PLAN.md                       # 計画書・設計方針
+LOG.md                        # 作業ログ
+```
+
 ## 作業ステップ
 
 1. [x] OpenClawリサーチ
@@ -80,6 +92,7 @@ Mac MiniにOpenClawを最もセキュアな方法でインストールし、Tele
 7. [x] 専用標準アカウント `claw` 方針への移行（PLAN.md, MANUAL.md, LOG.md更新）
 8. [x] ワークスペースを `/opt/openclaw/workspace/` に変更（agent.workspace設定、バージョン管理方針）
 9. [x] ワークスペースをGoogle Drive共有フォルダ方式に変更（/opt/openclaw/workspace/ → Google Drive、個人PC側でgit管理）
+10. [x] GUI操作のCUI化 + セットアップスクリプト化（手動マニュアル → 半自動セットアップ）
 
 ## 参考資料
 

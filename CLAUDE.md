@@ -1,0 +1,1 @@
+ソースコードをSingle Source of Truth (SSOT) とします。作業のたびにREADME.mdを確認して、README.mdに古い情報があれば更新してください。

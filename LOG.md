@@ -118,3 +118,64 @@ PLAN.md・MANUAL.mdの変更点:
 - **再起動手順**: Google Driveの同期確認ステップを追加
 - **セキュリティチェックリスト**: `/opt/openclaw/workspace/` 関連 → Google Drive関連に置き換え
 - **前提条件**: Open Claw専用Googleアカウントと共有フォルダの事前準備を追加
+
+### GUI操作のCUI化 + セットアップスクリプト化
+
+手動マニュアル形式から半自動セットアップスクリプトへリファクタリング。
+
+#### GUI操作のCUI化調査結果
+
+| GUI操作 | CUI化 | 方法 |
+|---------|-------|------|
+| 自動ログイン無効 | 可能 | `sudo sysadminctl -autologin off` |
+| Screen Sharing有効化 | 部分的 | `launchctl enable/bootstrap` + `dseditgroup`。macOS 12.1+のTCC制限によりGUI推奨 |
+| SSH有効化 | 可能 | `sudo systemsetup -setremotelogin on` |
+| Google Drive サインイン/ミラーリング | 不可 | GUI必須（OAuth認証フロー、ミラーリング設定にはCLI APIなし） |
+
+#### スクリプト構成
+
+3つの独立したスクリプトを作成:
+
+1. **`scripts/01-admin-macos-setup.sh`** (管理者ユーザーで実行)
+   - macOSセキュリティ基盤（ファイアウォール、ステルスモード、スリープ防止、自動ログイン無効、Screen Sharing、SSH）
+   - Tailscaleインストール・認証・デーモン起動
+   - clawアカウント作成・権限設定
+   - Google Drive for Desktopインストール
+   - Tailscale Serve設定
+
+2. **`scripts/02-claw-user-setup.sh`** (clawユーザーで実行)
+   - Google Driveセットアップ（GUI操作をスクリプトがガイド、アプリ自動起動）
+   - miseインストール・シェル統合
+   - Node.jsインストール（mise経由）
+   - 権限制限の自動検証（sudo/brew不可の確認）
+
+3. **`scripts/03-openclaw-setup.sh`** (clawユーザーで実行)
+   - OpenClawインストール (`npm install -g openclaw@latest`)
+   - Telegram Bot情報の対話的入力
+   - ワークスペースパスの自動検出
+   - `openclaw.json` 設定ファイル自動生成
+   - 環境変数設定（TELEGRAM_BOT_TOKEN → ~/.zprofile）
+   - LLM APIキー設定（キーチェーン）
+   - ファイルパーミッション設定
+   - Gateway起動・セキュリティ監査
+   - `--reinit` オプション: 既存インストールを初期化して再インストール
+     - Gateway停止、LaunchAgent削除、設定バックアップ、データ削除、npm uninstall
+     - その後通常のインストールフローを再実行
+
+#### MANUAL.mdの変更
+
+- 手動ステップ実行形式からスクリプト実行ガイドに変更
+- 各Phaseの説明はスクリプトが何をするかの解説に変更
+- 運用ガイド、セキュリティチェックリスト、再起動復旧手順は維持
+- GUI操作が必要な箇所（Screen Sharing VNCパスワード設定、Google Driveサインイン）は明示
+
+### MANUAL.md → README.md への移行
+
+- MANUAL.mdの全内容をREADME.mdに移行し、MANUAL.mdを削除
+- README.mdとして必要な情報を加筆:
+  - アーキテクチャ図（PLAN.mdから）
+  - セキュリティモデルの概要テーブル（レイヤー別の対策一覧）
+  - プロジェクト構成・ディレクトリ構成
+  - クイックスタートセクション（3行で全体の流れがわかる）
+  - Telegram Bot の事前準備手順（BotFather操作、User ID取得方法）
+- PLAN.mdのプロジェクト構成も `MANUAL.md` → `README.md` に更新

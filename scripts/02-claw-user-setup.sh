@@ -92,13 +92,22 @@ setup_mise() {
     step "3. シェル設定"
     local mise_init='eval "$(~/.local/bin/mise activate zsh)"'
 
+    if ! grep -qF "compinit" ~/.zshrc 2>/dev/null; then
+        sed -i '' '1i\
+autoload -Uz compinit \&\& compinit\
+' ~/.zshrc 2>/dev/null || {
+            echo "autoload -Uz compinit && compinit" > /tmp/.zshrc_new
+            echo "" >> /tmp/.zshrc_new
+            cat ~/.zshrc >> /tmp/.zshrc_new 2>/dev/null
+            mv /tmp/.zshrc_new ~/.zshrc
+        }
+        success "~/.zshrc に compinit 初期化を追加"
+    fi
+
     if grep -qF "mise activate" ~/.zshrc 2>/dev/null; then
         info "mise のシェル統合は設定済み"
     else
-        if ! grep -qF "compinit" ~/.zshrc 2>/dev/null; then
-            echo "autoload -Uz compinit && compinit" >> ~/.zshrc
-            echo "" >> ~/.zshrc
-        fi
+        echo "" >> ~/.zshrc
         echo "# mise runtime manager" >> ~/.zshrc
         echo "$mise_init" >> ~/.zshrc
         success "~/.zshrc に mise 設定を追加"

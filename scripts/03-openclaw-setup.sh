@@ -37,7 +37,7 @@ prompt_secret() {
     local prompt="$1"
     local value
     read -rsp "$(echo -e "${BLUE}${prompt}: ${NC}")" value
-    echo
+    echo >&2
     echo "$value"
 }
 
@@ -388,8 +388,8 @@ setup_secrets() {
     fi
 
     cat >> "$env_file" << ENVEOF
-TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-ANTHROPIC_API_KEY=${anthropic_key}
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
+ANTHROPIC_API_KEY="${anthropic_key}"
 ENVEOF
     chmod 600 "$env_file"
 

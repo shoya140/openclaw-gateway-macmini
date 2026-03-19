@@ -97,6 +97,12 @@ do_reinit() {
     info "OpenClaw アンインストール中..."
     npm uninstall -g openclaw 2>/dev/null || true
 
+    # ワークスペースのシンボリックリンクを削除（実体のGoogle Driveフォルダは保持）
+    if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
+        info "ワークスペースのシンボリックリンクを削除（Google Driveの実体は保持）..."
+        rm "$OPENCLAW_DIR/workspace"
+    fi
+
     # データディレクトリ削除
     info "データディレクトリ削除中..."
     rm -rf "$OPENCLAW_DIR"
@@ -154,11 +160,12 @@ setup_telegram() {
 }
 
 # ============================================================
-# Detect Workspace
+# Detect Workspace & Create Symlink
 # ============================================================
 detect_workspace() {
-    step "3. ワークスペースパス検出"
+    step "3. ワークスペースパス検出 + シンボリックリンク作成"
 
+    local gdrive_path=""
     local candidates
     candidates=$(find ~/Library/CloudStorage/ -maxdepth 3 -type d -name "openclaw-workspace" 2>/dev/null || true)
 
@@ -166,23 +173,49 @@ detect_workspace() {
         local count
         count=$(echo "$candidates" | wc -l | tr -d ' ')
         if [[ "$count" -eq 1 ]]; then
-            WORKSPACE_PATH="$candidates"
-            info "ワークスペース検出: $WORKSPACE_PATH"
+            gdrive_path="$candidates"
+            info "ワークスペース検出: $gdrive_path"
             if ! confirm "このパスを使用しますか?"; then
-                WORKSPACE_PATH=$(prompt_value "ワークスペースのフルパス")
+                gdrive_path=$(prompt_value "ワークスペースのフルパス")
             fi
         else
             info "複数のワークスペース候補が見つかりました:"
             echo "$candidates"
-            WORKSPACE_PATH=$(prompt_value "使用するワークスペースのフルパス")
+            gdrive_path=$(prompt_value "使用するワークスペースのフルパス")
         fi
     else
         warn "openclaw-workspace フォルダが見つかりません"
-        WORKSPACE_PATH=$(prompt_value "ワークスペースのフルパス (例: /Users/claw/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace)")
+        gdrive_path=$(prompt_value "ワークスペースのフルパス (例: /Users/claw/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace)")
     fi
 
-    [[ -d "$WORKSPACE_PATH" ]] || warn "指定されたパスが存在しません: $WORKSPACE_PATH (後でGoogle Drive同期後に作成される場合があります)"
-    success "ワークスペースパス: $WORKSPACE_PATH"
+    [[ -d "$gdrive_path" ]] || warn "指定されたパスが存在しません: $gdrive_path (後でGoogle Drive同期後に作成される場合があります)"
+
+    local symlink_path="$OPENCLAW_DIR/workspace"
+    mkdir -p "$OPENCLAW_DIR"
+
+    if [[ -L "$symlink_path" ]]; then
+        local current_target
+        current_target=$(readlink "$symlink_path")
+        if [[ "$current_target" == "$gdrive_path" ]]; then
+            info "シンボリックリンクは既に正しく設定されています"
+        else
+            info "既存のシンボリックリンクを更新: $current_target → $gdrive_path"
+            rm "$symlink_path"
+            ln -s "$gdrive_path" "$symlink_path"
+        fi
+    elif [[ -e "$symlink_path" ]]; then
+        warn "$symlink_path が既に存在します（シンボリックリンクではありません）"
+        if confirm "削除してシンボリックリンクに置き換えますか?"; then
+            rm -rf "$symlink_path"
+            ln -s "$gdrive_path" "$symlink_path"
+        else
+            error "ワークスペースのシンボリックリンクを作成できませんでした"
+        fi
+    else
+        ln -s "$gdrive_path" "$symlink_path"
+    fi
+
+    success "シンボリックリンク: $symlink_path → $gdrive_path"
 }
 
 # ============================================================
@@ -233,10 +266,6 @@ generate_config() {
         "target": "dm"
       }
     }
-  },
-
-  "agent": {
-    "workspace": "${WORKSPACE_PATH}"
   },
 
   "agents": {

@@ -22,10 +22,11 @@ Mac MiniにOpenClawを最もセキュアな方法でインストールし、Tele
 | パス | 内容 | アクセス |
 |------|------|---------|
 | `/Users/claw/.openclaw/` | 設定、認証、セッション等（デフォルト） | claw のみ（管理者は sudo） |
-| `~/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace/` | エージェントの作業ディレクトリ（Google Drive同期） | claw（Google Drive経由で個人PCと共有） |
+| `~/.openclaw/workspace/` | デフォルトワークスペース（→ Google Driveへのシンボリックリンク） | claw |
+| `~/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace/` | ワークスペース実体（Google Drive同期） | claw（Google Drive経由で個人PCと共有） |
 
 - `~/.openclaw/` はデフォルトの場所に維持（機密データを含むため mode 700 のホームディレクトリ内が適切）
-- `agent.workspace` をGoogle Drive内の共有フォルダに設定
+- `~/.openclaw/workspace` をGoogle Drive共有フォルダへのシンボリックリンクとして設定（デフォルトワークスペースパスを使用）
 - `openclaw.json` はシークレットを含まない設計のためバージョン管理可能（ただし変更頻度が低いため管理者が sudo で直接編集する運用）
 
 ### ワークスペース共有方式: Google Drive共有フォルダ

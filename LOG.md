@@ -179,3 +179,21 @@ PLAN.md・MANUAL.mdの変更点:
   - クイックスタートセクション（3行で全体の流れがわかる）
   - Telegram Bot の事前準備手順（BotFather操作、User ID取得方法）
 - PLAN.mdのプロジェクト構成も `MANUAL.md` → `README.md` に更新
+
+## 2026-03-19
+
+### ワークスペースをシンボリックリンク方式に変更
+
+`agent.workspace` で直接Google Driveのパスを指定する方式から、デフォルトワークスペース（`~/.openclaw/workspace`）にシンボリックリンクを置く方式に変更。
+
+変更理由:
+- 設定ファイルから `agent.workspace` を削除でき、OpenClawのデフォルト動作に任せられる
+- パスの管理がファイルシステムレベルに統一される
+
+変更点:
+- **`scripts/03-openclaw-setup.sh`**:
+  - `detect_workspace()` → Google Driveパス検出後、`~/.openclaw/workspace` にシンボリックリンクを作成
+  - `generate_config()` → `"agent": { "workspace": "..." }` ブロックを削除
+  - `do_reinit()` → シンボリックリンクの削除を追加（Google Driveの実体は保持）
+- **README.md**: ディレクトリ構成にシンボリックリンクを追記、セキュリティチェックリスト更新
+- **PLAN.md**: ディレクトリ構成・ワークスペース方針を更新

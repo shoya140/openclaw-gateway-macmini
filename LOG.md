@@ -338,3 +338,13 @@ SSH接続時に `zsh: command not found: compdef` エラーが発生。
 
 修正内容:
 - **`scripts/02-claw-user-setup.sh`**: `.zshrc` に mise 設定を追加する前に `autoload -Uz compinit && compinit` を挿入するように変更
+
+### Gateway Dashboard の origin not allowed エラー修正
+
+Tailscale Serve 経由で Gateway Dashboard にアクセスすると「origin not allowed (open the Control UI from the gateway host or allow it in gateway.controlUi.allowedOrigins)」エラーが発生。
+
+原因: `controlUi.allowedOrigins` が設定されておらず、Tailscale Serve 経由のアクセス（Origin: `https://<hostname>.ts.net`）が拒否されていた。
+
+修正内容:
+- **`scripts/03-openclaw-setup.sh`**: `generate_config()` で `tailscale status --self --json` から Tailscale ホスト名を自動検出し、`controlUi.allowedOrigins` に追加。自動検出できない場合は手動入力を求める
+- **`README.md`**: 設定テーブルに `gateway.controlUi.allowedOrigins` を追加

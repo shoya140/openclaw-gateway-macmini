@@ -280,6 +280,18 @@ generate_config() {
     gateway_token=$(openssl rand -hex 32)
     info "Gateway auth token を生成しました"
 
+    local tailscale_origin=""
+    local ts_hostname
+    ts_hostname=$(tailscale status --self --json 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null) || true
+    if [[ -n "$ts_hostname" ]]; then
+        tailscale_origin="https://${ts_hostname}"
+        info "Tailscale ホスト名検出: ${ts_hostname}"
+    else
+        warn "Tailscale ホスト名を自動検出できません"
+        tailscale_origin=$(prompt_value "Tailscale Serve の URL (例: https://mac-mini.tailnet-name.ts.net)")
+    fi
+
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
   "gateway": {
@@ -294,7 +306,8 @@ generate_config() {
       "mode": "serve"
     },
     "controlUi": {
-      "allowInsecureAuth": false
+      "allowInsecureAuth": false,
+      "allowedOrigins": ["${tailscale_origin}"]
     }
   },
 

@@ -87,12 +87,6 @@ do_reinit() {
         info "設定ファイルをバックアップ: $backup"
     fi
 
-    # ~/.zprofile から TELEGRAM_BOT_TOKEN を削除
-    if [[ -f ~/.zprofile ]]; then
-        sed -i '' '/^export TELEGRAM_BOT_TOKEN=/d' ~/.zprofile 2>/dev/null || true
-        info "~/.zprofile から TELEGRAM_BOT_TOKEN を削除"
-    fi
-
     # OpenClaw アンインストール
     info "OpenClaw アンインストール中..."
     npm uninstall -g openclaw 2>/dev/null || true
@@ -374,44 +368,31 @@ CONFIGEOF
 }
 
 # ============================================================
-# Setup Environment Variables
+# Setup Secrets (.env)
 # ============================================================
-setup_env() {
-    step "5. 環境変数設定"
-
-    # TELEGRAM_BOT_TOKEN
-    if grep -q "^export TELEGRAM_BOT_TOKEN=" ~/.zprofile 2>/dev/null; then
-        info "TELEGRAM_BOT_TOKEN は既に設定済みです。上書きします"
-        sed -i '' '/^export TELEGRAM_BOT_TOKEN=/d' ~/.zprofile
-    fi
-
-    {
-        echo ""
-        echo "# OpenClaw - Telegram Bot Token"
-        echo "export TELEGRAM_BOT_TOKEN=\"${TELEGRAM_BOT_TOKEN}\""
-    } >> ~/.zprofile
-
-    export TELEGRAM_BOT_TOKEN
-    success "TELEGRAM_BOT_TOKEN を ~/.zprofile に設定"
-
-    setup_api_keys
-}
-
-setup_api_keys() {
-    step "6. LLM APIキー設定"
+setup_secrets() {
+    step "5. シークレット設定 (~/.openclaw/.env)"
 
     local env_file="$OPENCLAW_DIR/.env"
+
+    # Anthropic API Key
     local anthropic_key
     anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
     [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
 
-    # 既存の ANTHROPIC_API_KEY を削除してから追加
+    # 既存のエントリを削除してから書き込み
     if [[ -f "$env_file" ]]; then
+        sed -i '' '/^TELEGRAM_BOT_TOKEN=/d' "$env_file"
         sed -i '' '/^ANTHROPIC_API_KEY=/d' "$env_file"
     fi
-    echo "ANTHROPIC_API_KEY=${anthropic_key}" >> "$env_file"
+
+    cat >> "$env_file" << ENVEOF
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+ANTHROPIC_API_KEY=${anthropic_key}
+ENVEOF
     chmod 600 "$env_file"
-    success "Anthropic API Key を $env_file に設定"
+
+    success "TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY を $env_file に設定"
 
     info "確認中..."
     openclaw models status || true
@@ -433,9 +414,6 @@ setup_permissions() {
 # ============================================================
 start_and_verify() {
     step "8. Gateway デーモン登録・起動・検証"
-
-    # .zprofile を読み込んで環境変数を有効化
-    source ~/.zprofile 2>/dev/null || true
 
     info "LaunchAgent 登録中..."
     openclaw gateway install --force
@@ -517,7 +495,7 @@ main() {
     detect_workspace
     generate_agents_md
     generate_config
-    setup_env
+    setup_secrets
     setup_permissions
     start_and_verify
     verify_telegram

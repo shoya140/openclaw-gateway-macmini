@@ -35,7 +35,7 @@ scripts/
   02-claw-user-setup.sh       # claw: Google Drive + mise + Node.js
   03-openclaw-setup.sh        # claw: OpenClawインストール・設定（--reinitで再インストール可）
 README.md                     # 本ドキュメント（セットアップガイド + 運用マニュアル）
-PLAN.md                       # 計画書・設計方針
+PLAN.md                       # 計画書・作業ステップ
 LOG.md                        # 作業ログ
 ```
 

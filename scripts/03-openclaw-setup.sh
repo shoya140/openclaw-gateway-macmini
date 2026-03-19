@@ -283,6 +283,7 @@ generate_config() {
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
   "gateway": {
+    "mode": "local",
     "port": 18789,
     "bind": "loopback",
     "auth": {
@@ -419,8 +420,16 @@ start_and_verify() {
     openclaw gateway install --force
     success "LaunchAgent 登録完了"
 
+    info "Doctor fix 実行中..."
+    openclaw doctor --fix || true
+
     info "Gateway 起動中..."
-    openclaw gateway restart
+    if openclaw gateway restart; then
+        success "Gateway 起動完了"
+    else
+        warn "Gateway 起動のヘルスチェックがタイムアウトしました"
+        warn "ログを確認してください: openclaw logs --follow"
+    fi
 
     step "9. セキュリティ監査"
     openclaw security audit || true

@@ -329,3 +329,12 @@ TELEGRAM_BOT_TOKEN=
 修正内容:
 - **`prompt_secret()`**: `echo` → `echo >&2` に変更（表示用改行を stderr に出力し、command substitution にキャプチャされないようにする）
 - **`setup_secrets()`**: `.env` の値をダブルクォートで囲むように変更（`KEY=value` → `KEY="value"`）
+
+### .zshrc に compinit 初期化を追加
+
+SSH接続時に `zsh: command not found: compdef` エラーが発生。
+
+原因: `mise activate zsh` と OpenClaw の補完スクリプトが `compdef` を使用するが、zsh の補完システム (`compinit`) が初期化されていなかった。
+
+修正内容:
+- **`scripts/02-claw-user-setup.sh`**: `.zshrc` に mise 設定を追加する前に `autoload -Uz compinit && compinit` を挿入するように変更

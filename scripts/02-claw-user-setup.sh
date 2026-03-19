@@ -95,7 +95,10 @@ setup_mise() {
     if grep -qF "mise activate" ~/.zshrc 2>/dev/null; then
         info "mise のシェル統合は設定済み"
     else
-        echo "" >> ~/.zshrc
+        if ! grep -qF "compinit" ~/.zshrc 2>/dev/null; then
+            echo "autoload -Uz compinit && compinit" >> ~/.zshrc
+            echo "" >> ~/.zshrc
+        fi
         echo "# mise runtime manager" >> ~/.zshrc
         echo "$mise_init" >> ~/.zshrc
         success "~/.zshrc に mise 設定を追加"

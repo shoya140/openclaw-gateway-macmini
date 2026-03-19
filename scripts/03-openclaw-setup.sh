@@ -120,10 +120,7 @@ install_openclaw() {
     step "1. OpenClaw インストール"
 
     if command -v openclaw &>/dev/null; then
-        info "OpenClaw はインストール済み ($(openclaw --version 2>/dev/null || echo 'version unknown'))"
-        if ! confirm "再インストールしますか?"; then
-            return
-        fi
+        info "OpenClaw はインストール済み ($(openclaw --version 2>/dev/null || echo 'version unknown')). 再インストールします"
     fi
 
     npm install -g openclaw@latest
@@ -182,9 +179,6 @@ detect_workspace() {
         if [[ "$count" -eq 1 ]]; then
             gdrive_path="$candidates"
             info "ワークスペース検出: $gdrive_path"
-            if ! confirm "このパスを使用しますか?"; then
-                gdrive_path=$(prompt_value "ワークスペースのフルパス")
-            fi
         else
             info "複数のワークスペース候補が見つかりました:"
             echo "$candidates"
@@ -211,13 +205,9 @@ detect_workspace() {
             ln -s "$gdrive_path" "$symlink_path"
         fi
     elif [[ -e "$symlink_path" ]]; then
-        warn "$symlink_path が既に存在します（シンボリックリンクではありません）"
-        if confirm "削除してシンボリックリンクに置き換えますか?"; then
-            rm -rf "$symlink_path"
-            ln -s "$gdrive_path" "$symlink_path"
-        else
-            error "ワークスペースのシンボリックリンクを作成できませんでした"
-        fi
+        warn "$symlink_path が既に存在します（シンボリックリンクではありません）。置き換えます"
+        rm -rf "$symlink_path"
+        ln -s "$gdrive_path" "$symlink_path"
     else
         ln -s "$gdrive_path" "$symlink_path"
     fi
@@ -241,10 +231,7 @@ generate_agents_md() {
     fi
 
     if [[ -f "$agents_md" ]]; then
-        info "AGENTS.md は既に存在します"
-        if ! confirm "上書きしますか?"; then
-            return
-        fi
+        info "AGENTS.md は既に存在します。上書きします"
     fi
 
     cat > "$agents_md" << 'AGENTSEOF'
@@ -394,13 +381,8 @@ setup_env() {
 
     # TELEGRAM_BOT_TOKEN
     if grep -q "^export TELEGRAM_BOT_TOKEN=" ~/.zprofile 2>/dev/null; then
-        if confirm "TELEGRAM_BOT_TOKEN は既に設定済みです。上書きしますか?"; then
-            sed -i '' '/^export TELEGRAM_BOT_TOKEN=/d' ~/.zprofile
-        else
-            info "TELEGRAM_BOT_TOKEN はそのまま維持"
-            setup_api_keys
-            return
-        fi
+        info "TELEGRAM_BOT_TOKEN は既に設定済みです。上書きします"
+        sed -i '' '/^export TELEGRAM_BOT_TOKEN=/d' ~/.zprofile
     fi
 
     {
@@ -418,20 +400,21 @@ setup_env() {
 setup_api_keys() {
     step "6. LLM APIキー設定"
 
-    info "APIキーを設定します"
-    echo
+    local env_file="$OPENCLAW_DIR/.env"
+    local anthropic_key
+    anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
+    [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
 
-    if confirm "Anthropic APIキーを設定しますか?"; then
-        openclaw models auth paste-token --provider anthropic
-        success "Anthropic APIキー設定完了"
+    # 既存の ANTHROPIC_API_KEY を削除してから追加
+    if [[ -f "$env_file" ]]; then
+        sed -i '' '/^ANTHROPIC_API_KEY=/d' "$env_file"
     fi
+    echo "ANTHROPIC_API_KEY=${anthropic_key}" >> "$env_file"
+    chmod 600 "$env_file"
+    success "Anthropic API Key を $env_file に設定"
 
-    if confirm "他のLLMプロバイダーのAPIキーを設定しますか?"; then
-        local provider
-        provider=$(prompt_value "プロバイダー名 (例: openai, openrouter)")
-        openclaw models auth paste-token --provider "$provider"
-        success "${provider} APIキー設定完了"
-    fi
+    info "確認中..."
+    openclaw models status || true
 }
 
 # ============================================================
@@ -464,9 +447,7 @@ start_and_verify() {
     step "9. セキュリティ監査"
     openclaw security audit || true
     echo
-    if confirm "Deep audit を実行しますか?"; then
-        openclaw security audit --deep || true
-    fi
+    openclaw security audit --deep || true
 
     step "10. インストール確認"
     openclaw doctor || true
@@ -530,7 +511,6 @@ main() {
     info "  6. ファイルパーミッション設定"
     info "  7. Gateway デーモン登録・起動・検証"
     echo
-    confirm "実行しますか?" || { info "中止しました"; exit 0; }
 
     install_openclaw
     setup_telegram

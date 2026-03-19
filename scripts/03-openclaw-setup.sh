@@ -128,10 +128,6 @@ install_openclaw() {
 
     npm install -g openclaw@latest
     success "OpenClaw インストール完了"
-
-    info "初期セットアップ実行中..."
-    openclaw onboard --install-daemon
-    success "初期セットアップ完了"
 }
 
 # ============================================================
@@ -226,12 +222,18 @@ generate_config() {
 
     mkdir -p "$OPENCLAW_DIR"
 
+    local gateway_token
+    gateway_token=$(openssl rand -hex 32)
+    info "Gateway auth token を生成しました"
+
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
   "gateway": {
+    "port": 18789,
     "bind": "loopback",
     "auth": {
-      "mode": "token"
+      "mode": "token",
+      "token": "${gateway_token}"
     },
     "tailscale": {
       "mode": "serve"
@@ -377,10 +379,14 @@ setup_permissions() {
 # Start Gateway & Verify
 # ============================================================
 start_and_verify() {
-    step "8. Gateway 起動・検証"
+    step "8. Gateway デーモン登録・起動・検証"
 
     # .zprofile を読み込んで環境変数を有効化
     source ~/.zprofile 2>/dev/null || true
+
+    info "LaunchAgent 登録中..."
+    openclaw gateway install --force
+    success "LaunchAgent 登録完了"
 
     info "Gateway 起動中..."
     openclaw gateway restart

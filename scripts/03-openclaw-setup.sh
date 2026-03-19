@@ -211,7 +211,69 @@ detect_workspace() {
         ln -s "$gdrive_path" "$symlink_path"
     fi
 
+    WORKSPACE_PATH="$gdrive_path"
     success "シンボリックリンク: $symlink_path → $gdrive_path"
+}
+
+# ============================================================
+# Generate AGENTS.md (System Prompt)
+# ============================================================
+generate_agents_md() {
+    step "3.5. ワークスペースに AGENTS.md 生成"
+
+    local agents_md="$WORKSPACE_PATH/AGENTS.md"
+
+    if [[ ! -d "$WORKSPACE_PATH" ]]; then
+        warn "ワークスペースがまだ存在しません: $WORKSPACE_PATH"
+        warn "AGENTS.md はGoogle Drive同期後に手動で作成してください"
+        return
+    fi
+
+    if [[ -f "$agents_md" ]]; then
+        info "AGENTS.md は既に存在します"
+        if ! confirm "上書きしますか?"; then
+            return
+        fi
+    fi
+
+    cat > "$agents_md" << 'AGENTSEOF'
+あなたはclawアカウント（標準・非管理者）で動作しています。
+
+## 環境
+- ランタイム管理: mise（~/.local/bin/mise）
+  - 新しいランタイムが必要な場合は `mise use -g <tool>@<version>` で自分でインストールできます
+  - 例: `mise use -g python@3.12`, `mise use -g go@1.22`
+- Node.js: mise経由でインストール済み
+
+## シェルコマンドの実行ルール
+- 通常のシェルコマンド（git, node, npm, python, ファイル操作, ビルド, テスト等）は自由に実行してください。
+- miseで管理可能なランタイムのインストール・バージョン変更は自分で実行してください。
+- 以下の操作は自分では実行できません。必要な場合はユーザーに実行すべきコマンド群を提示し、管理者アカウントでの手動実行を依頼してください:
+  - sudo を必要とする操作（システム設定変更、サービス管理、パーミッション変更等）
+  - brew を必要とする操作（ソフトウェアのインストール・アンインストール）
+  - LaunchDaemonの作成・変更（/Library/LaunchDaemons/）
+  - システム全体に影響する設定変更
+
+## 依頼時のフォーマット
+ユーザーへの依頼は以下の形式で送信してください:
+
+管理者権限が必要な作業があります
+
+実行が必要なコマンド:
+```bash
+# （ここにコマンドを記述）
+```
+
+理由: （なぜこの作業が必要か簡潔に）
+
+完了したら教えてください。
+
+## ワークスペース
+- 作業ディレクトリ: Google Drive共有フォルダ内
+- このフォルダは個人PCのGoogle Driveと同期されています。ファイルの変更は自動的に個人PC側に反映されます。
+AGENTSEOF
+
+    success "AGENTS.md 生成: $agents_md"
 }
 
 # ============================================================
@@ -255,7 +317,7 @@ generate_config() {
         "attempts": 3,
         "minDelayMs": 100,
         "maxDelayMs": 5000,
-        "jitter": true
+        "jitter": 0.1
       },
       "timeoutSeconds": 30,
       "actions": {
@@ -270,29 +332,28 @@ generate_config() {
     }
   },
 
+  "tools": {
+    "profile": "coding",
+    "deny": [
+      "sessions_spawn",
+      "sessions_send",
+      "gateway",
+      "cron"
+    ],
+    "fs": {
+      "workspaceOnly": true,
+      "allowedRoots": ["/Users/claw"]
+    },
+    "exec": {
+      "security": "full"
+    }
+  },
+
   "agents": {
     "defaults": {
       "sandbox": {
-        "mode": "exec",
-        "workspaceAccess": "rw"
-      },
-      "tools": {
-        "profile": "developer",
-        "deny": [
-          "sessions_spawn",
-          "sessions_send",
-          "gateway",
-          "cron"
-        ],
-        "fs": {
-          "workspaceOnly": true,
-          "allowedRoots": ["/Users/claw"]
-        },
-        "exec": {
-          "security": "sandbox"
-        }
-      },
-      "systemPrompt": "あなたはclawアカウント（標準・非管理者）で動作しています。\n\n## 環境\n- ランタイム管理: mise（~/.local/bin/mise）\n  - 新しいランタイムが必要な場合は \`mise use -g <tool>@<version>\` で自分でインストールできます\n  - 例: \`mise use -g python@3.12\`, \`mise use -g go@1.22\`\n- Node.js: mise経由でインストール済み\n\n## シェルコマンドの実行ルール\n- 通常のシェルコマンド（git, node, npm, python, ファイル操作, ビルド, テスト等）は自由に実行してください。\n- miseで管理可能なランタイムのインストール・バージョン変更は自分で実行してください。\n- 以下の操作は自分では実行できません。必要な場合はユーザーに実行すべきコマンド群を提示し、管理者アカウントでの手動実行を依頼してください:\n  - sudo を必要とする操作（システム設定変更、サービス管理、パーミッション変更等）\n  - brew を必要とする操作（ソフトウェアのインストール・アンインストール）\n  - LaunchDaemonの作成・変更（/Library/LaunchDaemons/）\n  - システム全体に影響する設定変更\n\n## 依頼時のフォーマット\nユーザーへの依頼は以下の形式で送信してください:\n\n管理者権限が必要な作業があります\n\n実行が必要なコマンド:\n```bash\n# （ここにコマンドを記述）\n```\n\n理由: （なぜこの作業が必要か簡潔に）\n\n完了したら教えてください。\n\n## ワークスペース\n- 作業ディレクトリ: Google Drive共有フォルダ内（agent.workspaceで設定されたパス）\n- このフォルダは個人PCのGoogle Driveと同期されています。ファイルの変更は自動的に個人PC側に反映されます。"
+        "mode": "off"
+      }
     }
   },
 
@@ -347,19 +408,18 @@ setup_env() {
 setup_api_keys() {
     step "6. LLM APIキー設定"
 
-    info "APIキーをキーチェーンに安全に保存します"
-    info "プロンプトに従いAPIキーを入力してください"
+    info "APIキーを設定します"
     echo
 
     if confirm "Anthropic APIキーを設定しますか?"; then
-        openclaw auth add anthropic
+        openclaw models auth paste-token --provider anthropic
         success "Anthropic APIキー設定完了"
     fi
 
     if confirm "他のLLMプロバイダーのAPIキーを設定しますか?"; then
         local provider
-        provider=$(prompt_value "プロバイダー名 (例: openai, google)")
-        openclaw auth add "$provider"
+        provider=$(prompt_value "プロバイダー名 (例: openai, openrouter)")
+        openclaw models auth paste-token --provider "$provider"
         success "${provider} APIキー設定完了"
     fi
 }
@@ -454,17 +514,18 @@ main() {
     info "このスクリプトは以下を実行します:"
     info "  1. OpenClaw インストール"
     info "  2. Telegram Bot 設定"
-    info "  3. ワークスペースパス検出"
+    info "  3. ワークスペースパス検出 + AGENTS.md 生成"
     info "  4. 設定ファイル生成 (openclaw.json)"
     info "  5. 環境変数・APIキー設定"
     info "  6. ファイルパーミッション設定"
-    info "  7. Gateway 起動・検証"
+    info "  7. Gateway デーモン登録・起動・検証"
     echo
     confirm "実行しますか?" || { info "中止しました"; exit 0; }
 
     install_openclaw
     setup_telegram
     detect_workspace
+    generate_agents_md
     generate_config
     setup_env
     setup_permissions

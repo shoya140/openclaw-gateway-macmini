@@ -52,7 +52,7 @@ preflight() {
     [[ "$(whoami)" == "claw" ]] || error "このスクリプトは 'claw' ユーザーで実行してください (現在: $(whoami))"
 
     export PATH="$HOME/.local/bin:$PATH"
-    eval "$(~/.local/bin/mise activate zsh 2>/dev/null)" || true
+    eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || true
 
     command -v node &>/dev/null || error "Node.js が見つかりません。先に 02-claw-user-setup.sh を実行してください"
     command -v npm &>/dev/null || error "npm が見つかりません。先に 02-claw-user-setup.sh を実行してください"

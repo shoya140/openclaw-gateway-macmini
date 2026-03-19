@@ -103,7 +103,7 @@ setup_mise() {
 
     # 現在のシェルで mise を有効化
     export PATH="$HOME/.local/bin:$PATH"
-    eval "$(~/.local/bin/mise activate zsh)" 2>/dev/null || true
+    eval "$(~/.local/bin/mise activate bash)" 2>/dev/null || true
 }
 
 # ============================================================
@@ -125,7 +125,7 @@ setup_nodejs() {
     success "Node.js インストール完了"
 
     # mise 経由で有効化
-    eval "$(~/.local/bin/mise activate zsh)" 2>/dev/null || true
+    eval "$(~/.local/bin/mise activate bash)" 2>/dev/null || true
 
     info "Node.js: $(node --version 2>/dev/null || echo 'not in path yet')"
     info "npm: $(npm --version 2>/dev/null || echo 'not in path yet')"

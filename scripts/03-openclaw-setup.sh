@@ -341,8 +341,7 @@ generate_config() {
       "cron"
     ],
     "fs": {
-      "workspaceOnly": true,
-      "allowedRoots": ["/Users/claw"]
+      "workspaceOnly": true
     },
     "exec": {
       "security": "full"

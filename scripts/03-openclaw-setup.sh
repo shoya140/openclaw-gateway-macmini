@@ -162,8 +162,19 @@ detect_workspace() {
     step "3. ワークスペースパス検出 + シンボリックリンク作成"
 
     local gdrive_path=""
-    local candidates
-    candidates=$(find ~/Library/CloudStorage/ -maxdepth 3 -type d -name "openclaw-workspace" 2>/dev/null || true)
+    local candidates=""
+    # Google Drive FileProvider のパスは find で辿れないことがあるため glob で検索
+    for p in ~/Library/CloudStorage/GoogleDrive-*/My\ Drive/openclaw-workspace \
+             ~/Library/CloudStorage/GoogleDrive-*/.shortcut-targets-by-id/*/openclaw-workspace \
+             ~/Library/CloudStorage/GoogleDrive-*/Shared\ drives/*/openclaw-workspace; do
+        if [[ -d "$p" ]]; then
+            if [[ -n "$candidates" ]]; then
+                candidates="$candidates"$'\n'"$p"
+            else
+                candidates="$p"
+            fi
+        fi
+    done
 
     if [[ -n "$candidates" ]]; then
         local count

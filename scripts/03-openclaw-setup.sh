@@ -283,12 +283,8 @@ generate_config() {
           "cron"
         ],
         "fs": {
-          "workspaceOnly": false,
-          "deny": [
-            "/Users/*/.*",
-            "/etc/**",
-            "/Library/**"
-          ]
+          "workspaceOnly": true,
+          "allowedRoots": ["/Users/claw"]
         },
         "exec": {
           "security": "sandbox"

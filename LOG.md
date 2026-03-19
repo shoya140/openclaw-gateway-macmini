@@ -182,6 +182,40 @@ PLAN.md・MANUAL.mdの変更点:
 
 ## 2026-03-19
 
+### ファイルシステムアクセス制御の修正
+
+調査の結果、`fs.deny` は公式スキーマに存在しない設定であり、実際には機能していないことが判明。公式にサポートされている `workspaceOnly` + `allowedRoots` 方式に変更。
+
+変更前:
+```json
+"fs": {
+  "workspaceOnly": false,
+  "deny": ["/Users/*/.*", "/etc/**", "/Library/**"]
+}
+```
+
+変更後:
+```json
+"fs": {
+  "workspaceOnly": true,
+  "allowedRoots": ["/Users/claw"]
+}
+```
+
+変更理由:
+- `fs.deny` は公式JSONスキーマに存在せず、`additionalProperties: false` のため無視される可能性が高い
+- 変更前は実質的にファイルシステム全体にアクセス可能な状態だった
+- `workspaceOnly: true` + `allowedRoots` は公式にサポートされた設定（PR #43565 マージ済み）
+- `/Users/claw/` 以下は自由に読み書き可能、それ以外はアクセス拒否される
+- コマンド実行（exec）はfs設定とは独立しており、PATH上のコマンドは引き続き利用可能
+- `~/.openclaw/openclaw.json` はエージェントから書き換え可能になるが、mode 600で防御
+
+変更ファイル:
+- `scripts/03-openclaw-setup.sh`: fs設定の変更
+- `README.md`: 設定テーブルとセキュリティチェックリストにfs設定を追加
+
+## 2026-03-19
+
 ### ワークスペースをシンボリックリンク方式に変更
 
 `agent.workspace` で直接Google Driveのパスを指定する方式から、デフォルトワークスペース（`~/.openclaw/workspace`）にシンボリックリンクを置く方式に変更。

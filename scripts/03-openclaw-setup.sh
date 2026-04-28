@@ -63,41 +63,42 @@ preflight() {
 # Reinit: アンインストール・クリーンアップ
 # ============================================================
 do_reinit() {
-    step "Reinit: OpenClaw の初期化"
-    warn "既存のOpenClawインストールを完全に削除し、再インストールします"
+    step "Reinit: スナップショット作成 + クリーン初期化"
+    warn "既存の ~/.openclaw を ~/.openclaw-snapshot-<ts>/ にコピーしてから削除します"
+    warn "復元はユーザーが手動で行ってください（自動復元はしません）"
 
     if ! confirm "本当に実行しますか?"; then
         info "中止しました"
         exit 0
     fi
 
-    # Gateway 停止
+    info "Watchdog 停止中..."
+    launchctl bootout "gui/$UID/local.openclaw.watchdog" 2>/dev/null || true
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
 
-    # LaunchAgent 削除
+    if [[ -d "$OPENCLAW_DIR" ]]; then
+        local snapshot_dir="$HOME/.openclaw-snapshot-$(date +%Y%m%d-%H%M%S)"
+        cp -a "$OPENCLAW_DIR" "$snapshot_dir"
+        success "スナップショット作成: $snapshot_dir"
+        info "完全ロールバック: cp -a $snapshot_dir $OPENCLAW_DIR"
+    else
+        info "既存の ~/.openclaw が見つからないためスナップショットをスキップ"
+    fi
+
     info "LaunchAgent 削除中..."
     launchctl remove ai.openclaw.gateway 2>/dev/null || true
     rm -f ~/Library/LaunchAgents/ai.openclaw.gateway.plist 2>/dev/null || true
+    rm -f ~/Library/LaunchAgents/local.openclaw.watchdog.plist 2>/dev/null || true
 
-    # 設定のバックアップ
-    if [[ -f "$OPENCLAW_CONFIG" ]]; then
-        local backup="/tmp/openclaw-config-backup-$(date +%Y%m%d%H%M%S).json"
-        cp "$OPENCLAW_CONFIG" "$backup"
-        info "設定ファイルをバックアップ: $backup"
-    fi
-
-    # OpenClaw アンインストール
     info "OpenClaw アンインストール中..."
     npm uninstall -g openclaw 2>/dev/null || true
 
-    # ワークスペースのシンボリックリンクを削除（実体のGoogle Driveフォルダは保持）
     if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
-        info "ワークスペースのシンボリックリンクを削除（Google Driveの実体は保持）..."
+        info "workspace シンボリックリンクを削除（Google Drive 実体は保持）..."
         rm "$OPENCLAW_DIR/workspace"
     fi
 
-    # データディレクトリ削除
     info "データディレクトリ削除中..."
     rm -rf "$OPENCLAW_DIR"
 
@@ -232,18 +233,25 @@ generate_agents_md() {
 あなたはclawアカウント（標準・非管理者）で動作しています。
 
 ## 環境
-- ランタイム管理: mise（~/.local/bin/mise）
-  - 新しいランタイムが必要な場合は `mise use -g <tool>@<version>` で自分でインストールできます
-  - 例: `mise use -g python@3.12`, `mise use -g go@1.22`
-- Node.js: mise経由でインストール済み
+- ランタイムおよびCLI tool 管理: mise（~/.local/bin/mise）
+  - 言語ランタイム（Node, Python, Go等）: `mise use -g <tool>@<version>`
+    - 例: `mise use -g python@3.12`, `mise use -g go@1.22`
+  - CLI tool（jq, ripgrep, fd, gh, bat 等）: `mise use -g aqua:<owner>/<repo>` または `mise use -g ubi:<owner>/<repo>`
+    - 例: `mise use -g aqua:BurntSushi/ripgrep`, `mise use -g aqua:cli/cli`, `mise use -g aqua:jqlang/jq`
+  - すべて `~/.local/share/mise/` 配下に隔離され、システムや admin に影響しません
+- brew は利用できません（claw からの権限昇格を防ぐため）
+
+## 実行モデル
+- 隔離は OS レベルで実現されています（claw 標準アカウント、ホームディレクトリ 700、admin/他ユーザーのファイル不可視）
+- exec は full mode で動作し、コマンド実行に都度承認は不要です。autonomous に動作してください
 
 ## シェルコマンドの実行ルール
-- 通常のシェルコマンド（git, node, npm, python, ファイル操作, ビルド, テスト等）は自由に実行してください。
-- miseで管理可能なランタイムのインストール・バージョン変更は自分で実行してください。
+- 通常のシェルコマンド（git, node, npm, python, ファイル操作, ビルド, テスト等）は自由に実行してください
+- 言語ランタイム・CLI tool は mise で自分でインストールしてください
 - 以下の操作は自分では実行できません。必要な場合はユーザーに実行すべきコマンド群を提示し、管理者アカウントでの手動実行を依頼してください:
   - sudo を必要とする操作（システム設定変更、サービス管理、パーミッション変更等）
-  - brew を必要とする操作（ソフトウェアのインストール・アンインストール）
-  - LaunchDaemonの作成・変更（/Library/LaunchDaemons/）
+  - brew を必要とする操作（formula / cask いずれも、admin アカウントでのみ実行）
+  - LaunchDaemon の作成・変更（/Library/LaunchDaemons/）
   - システム全体に影響する設定変更
 
 ## 依頼時のフォーマット
@@ -307,6 +315,8 @@ generate_config() {
     },
     "controlUi": {
       "allowInsecureAuth": false,
+      "dangerouslyAllowHostHeaderOriginFallback": false,
+      "dangerouslyDisableDeviceAuth": false,
       "allowedOrigins": ["${tailscale_origin}"]
     }
   },
@@ -318,6 +328,12 @@ generate_config() {
         ${TELEGRAM_USER_ID}
       ],
       "groupPolicy": "allowlist",
+      "groupAllowFrom": [
+        ${TELEGRAM_USER_ID}
+      ],
+      "errorPolicy": "always",
+      "errorCooldownMs": 120000,
+      "textChunkLimit": 3500,
       "mediaMaxMb": 20,
       "retry": {
         "attempts": 3,
@@ -327,7 +343,9 @@ generate_config() {
       },
       "timeoutSeconds": 30,
       "actions": {
+        "sendMessage": true,
         "deleteMessage": false,
+        "reactions": false,
         "sticker": false
       },
       "execApprovals": {
@@ -341,6 +359,8 @@ generate_config() {
   "tools": {
     "profile": "coding",
     "deny": [
+      "group:automation",
+      "group:runtime",
       "sessions_spawn",
       "sessions_send",
       "gateway",
@@ -354,8 +374,15 @@ generate_config() {
     }
   },
 
+  "browser": {
+    "ssrfPolicy": {
+      "dangerouslyAllowPrivateNetwork": false
+    }
+  },
+
   "agents": {
     "defaults": {
+      "model": "anthropic/claude-opus-4-7",
       "sandbox": {
         "mode": "off"
       }
@@ -389,12 +416,10 @@ setup_secrets() {
 
     local env_file="$OPENCLAW_DIR/.env"
 
-    # Anthropic API Key
     local anthropic_key
     anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
     [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
 
-    # 既存のエントリを削除してから書き込み
     if [[ -f "$env_file" ]]; then
         sed -i '' '/^TELEGRAM_BOT_TOKEN=/d' "$env_file"
         sed -i '' '/^ANTHROPIC_API_KEY=/d' "$env_file"
@@ -424,6 +449,20 @@ setup_permissions() {
 }
 
 # ============================================================
+# Spotlight 除外
+# ============================================================
+exclude_spotlight() {
+    step "7.5. Spotlight インデックス除外"
+    touch "$OPENCLAW_DIR/.metadata_never_index"
+    success "$OPENCLAW_DIR を Spotlight インデックスから除外"
+    if [[ -d "${WORKSPACE_PATH:-}" ]]; then
+        touch "${WORKSPACE_PATH}/.metadata_never_index" 2>/dev/null \
+            && success "${WORKSPACE_PATH} を Spotlight インデックスから除外" \
+            || info "ワークスペースの除外はスキップ（権限なし）"
+    fi
+}
+
+# ============================================================
 # Start Gateway & Verify
 # ============================================================
 start_and_verify() {
@@ -432,6 +471,8 @@ start_and_verify() {
     info "LaunchAgent 登録中..."
     openclaw gateway install --force
     success "LaunchAgent 登録完了"
+
+    inject_launchagent_env
 
     info "Doctor fix 実行中..."
     openclaw doctor --fix || true
@@ -444,6 +485,8 @@ start_and_verify() {
         warn "ログを確認してください: openclaw logs --follow"
     fi
 
+    install_watchdog
+
     step "9. セキュリティ監査"
     openclaw security audit || true
     echo
@@ -452,6 +495,88 @@ start_and_verify() {
     step "10. インストール確認"
     openclaw doctor || true
     openclaw status || true
+}
+
+# ============================================================
+# LaunchAgent plist に環境変数を注入
+# ============================================================
+inject_launchagent_env() {
+    step "8.1 LaunchAgent plist に OPENCLAW_NO_RESPAWN=1 を注入"
+
+    local plist="$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+    if [[ ! -f "$plist" ]]; then
+        warn "LaunchAgent plist が見つかりません: $plist"
+        return
+    fi
+
+    # 既存のキーがあれば削除してから追加（idempotent）
+    /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:OPENCLAW_NO_RESPAWN" "$plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENCLAW_NO_RESPAWN string 1" "$plist"
+
+    success "OPENCLAW_NO_RESPAWN=1 を $plist に注入"
+    info "config 変更時の SIGUSR1 in-process restart による respawn ループを防止"
+}
+
+# ============================================================
+# Watchdog LaunchAgent インストール
+# ============================================================
+install_watchdog() {
+    step "8.2 Watchdog LaunchAgent インストール"
+
+    local watchdog_script="$OPENCLAW_DIR/scripts/watchdog.sh"
+    local watchdog_plist="$HOME/Library/LaunchAgents/local.openclaw.watchdog.plist"
+    local watchdog_log_dir="$OPENCLAW_DIR/logs"
+
+    mkdir -p "$(dirname "$watchdog_script")" "$watchdog_log_dir"
+
+    cat > "$watchdog_script" << 'WATCHDOGEOF'
+#!/bin/bash
+set -uo pipefail
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || true
+
+LOG="$HOME/.openclaw/logs/watchdog.log"
+TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+
+if openclaw gateway status >/dev/null 2>&1; then
+    exit 0
+fi
+
+echo "$TS [WARN] gateway not responding; kicking LaunchAgent" >> "$LOG"
+launchctl kickstart -k "gui/$UID/ai.openclaw.gateway" >> "$LOG" 2>&1
+WATCHDOGEOF
+    chmod 700 "$watchdog_script"
+
+    cat > "$watchdog_plist" << PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.openclaw.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${watchdog_script}</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${watchdog_log_dir}/watchdog.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${watchdog_log_dir}/watchdog.err.log</string>
+</dict>
+</plist>
+PLISTEOF
+
+    launchctl bootout "gui/$UID/local.openclaw.watchdog" 2>/dev/null || true
+    launchctl bootstrap "gui/$UID" "$watchdog_plist"
+    success "Watchdog LaunchAgent 登録完了 (60秒間隔で gateway 状態をチェック)"
+    info "ログ: $watchdog_log_dir/watchdog.log"
 }
 
 # ============================================================
@@ -474,7 +599,8 @@ usage() {
     echo "OpenClaw のインストールと設定を行います。"
     echo ""
     echo "Options:"
-    echo "  --reinit    既存のインストールを削除し、再インストールする"
+    echo "  --reinit    既存の ~/.openclaw を ~/.openclaw-snapshot-<ts>/ にコピーしてから削除し、"
+    echo "              再インストールする。スナップショットからの復元はユーザーが手動で行う。"
     echo "  --help      このヘルプを表示"
 }
 
@@ -508,8 +634,8 @@ main() {
     info "  3. ワークスペースパス検出 + AGENTS.md 生成"
     info "  4. 設定ファイル生成 (openclaw.json)"
     info "  5. 環境変数・APIキー設定"
-    info "  6. ファイルパーミッション設定"
-    info "  7. Gateway デーモン登録・起動・検証"
+    info "  6. ファイルパーミッション設定 + Spotlight 除外"
+    info "  7. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・watchdog インストール・検証"
     echo
 
     install_openclaw
@@ -519,6 +645,7 @@ main() {
     generate_config
     setup_secrets
     setup_permissions
+    exclude_spotlight
     start_and_verify
     verify_telegram
 
@@ -528,11 +655,11 @@ main() {
     info "再起動後の復旧手順:"
     info "  1. Tailscaleは自動接続 (LaunchDaemon)"
     info "  2. Screen Sharing で claw アカウントにログイン"
-    info "  3. OpenClaw は LaunchAgent で自動起動"
+    info "  3. OpenClaw は LaunchAgent で自動起動 (watchdog が60秒間隔で監視)"
     info "  4. Google Drive の同期完了を確認"
     info "  5. Telegram からメッセージを送信して動作確認"
     info ""
-    info "再インストールが必要な場合:"
+    info "再インストールが必要な場合 (スナップショットからの復元は手動):"
     info "  $0 --reinit"
 }
 

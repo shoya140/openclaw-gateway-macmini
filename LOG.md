@@ -348,3 +348,122 @@ Tailscale Serve 経由で Gateway Dashboard にアクセスすると「origin no
 修正内容:
 - **`scripts/03-openclaw-setup.sh`**: `generate_config()` で `tailscale status --self --json` から Tailscale ホスト名を自動検出し、`controlUi.allowedOrigins` に追加。自動検出できない場合は手動入力を求める
 - **`README.md`**: 設定テーブルに `gateway.controlUi.allowedOrigins` を追加
+
+## 2026-04-28
+
+### ベストプラクティス全面更新
+
+公式 docs (gateway/security, channels/telegram, platforms/macos, help/environment) と複数のサードパーティガイド (aimaker substack, dirkpaessler.blog, mager.co, theothermartian/openclaw-mac-mini-setup, nebius blog) を調査し、以下を反映。
+
+#### ポリシー判断: brew share は採用せず撤回
+
+当初は claw に brew formula を許可（admin が staff グループ書き込み権限を付与）する案を検討したが、以下のリスクで撤回:
+- `/opt/homebrew/bin/*` を staff 書き込み可能にすると、claw を乗っ取った攻撃者が brew 本体や git 等のバイナリを差し替え可能
+- 後日 admin が `brew upgrade` 等を実行した際、admin の権限で攻撃者のコードが実行される（水平→垂直の権限昇格）
+- 管理者は sudo 持ちなので root 権限まで一直線
+- OpenClaw は Telegram 経由でインターネット露出するため、claw 乗っ取りを前提に設計すべき
+
+代替として、CLI tool（jq, ripgrep, fd, gh 等）は mise の aqua/ubi バックエンドで claw 配下にインストールする方針に。すべて `~/.local/share/mise/` に隔離され admin に影響しない。
+
+最終的な構成:
+- **`scripts/01-admin-macos-setup.sh`**: brew share 関連の変更なし（元のまま）
+- **`scripts/02-claw-user-setup.sh`**: 既存の `verify_restrictions()` を維持。brew prefix への書き込み不可を能動的にチェックする検査を追加（万一 admin が誤って共有してしまった場合の検出）
+- **AGENTS.md**: brew は利用不可と明記。CLI tool は `mise use -g aqua:<owner>/<repo>` で導入、と具体例つきで案内
+
+#### `--reinit` にスナップショット作成機能を追加（自動復元は意図的に撤回）
+
+旧仕様の `--reinit` は `~/.openclaw/` を全削除するため、Telegram Bot Token / API Key / pairing / sessions / skills が失われ毎回再入力必須だった。これを改修:
+
+- **`do_reinit()`**: 削除前に `~/.openclaw-snapshot-<ts>/` へ `cp -a` でスナップショット作成
+- 自動値抽出・自動 state 復元は実装しない方針に決定。理由: ユーザーが「どのファイルを引き継ぐべきか自分で把握する」運用設計のため。自動化すると引き継いだ内容と引き継がなかった内容が不透明になる
+- 復元は `cp -a ~/.openclaw-snapshot-<ts>/<item> ~/.openclaw/` で手動実行
+- README に「手動復元の参考」セクションを追加し、各候補（credentials/agents/sessions/skills/exec-approvals.json/TOOLS.md/`gateway.auth.token`）のコマンド例を記載
+
+なお自動復元の実装案（`extract_snapshot_values()` で `RESTORED_*` 環境変数に抽出 → 各 setup 関数で参照、`restore_state_from_snapshot()` で state コピー、`--no-restore` フラグ）は一度コミットしたが、この方針判断で撤回した。
+
+## 2026-04-29
+
+### exec.security を "full" に戻す + exec-approvals.json 削除
+
+ユーザーから「専用アカウント作っているからできるだけ自律させたい」との要望。`exec.security: allowlist` + `ask: on-miss` の効果を再評価:
+
+- allowlist でブロックされる脅威の多くは結局「読み取り + curl 外部送信」のような組み合わせで、個々のコマンドは allowlist に入る or 一度承認すれば後は自由
+- 真の脅威（API キー流出、Telegram Bot 乗っ取り、tailnet ピボット、API コスト暴走）は exec の allowlist では防げない
+- 一方、autonomy を犠牲にしてプロンプト承認を頻発させる UX コストは大きい
+- claw 専用アカウントによる OS レベル隔離が既に主要な防御を提供（admin/他ユーザー不可視、sudo 不可、システム改変不可）
+
+判断: **`exec.security: "full"` に戻す**。代わりに以下を別レイヤーで補う方針を README に明記:
+- Anthropic console での月額 spend cap (API キー流出時の被害金額の上限化)
+- Tailscale ACL (claw マシンから他 tailnet ノードへの egress 制限)
+- 既存の `tools.deny` (gateway, sessions_spawn, sessions_send, cron 等の自己拡張・永続化を抑止)
+- `tools.fs.workspaceOnly: true` (FS アクセスを workspace に限定)
+- `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork: false` (内部ネットワーク到達を抑止)
+
+実装変更:
+- **`scripts/03-openclaw-setup.sh`**: `tools.exec` を `{"security": "full"}` に簡略化。`generate_exec_approvals()` 関数ごと削除し、main() 呼び出しと step 紹介から除去
+- **`AGENTS.md` 生成テンプレート**: 「危険コマンドは exec allowlist 制御下にあり、未知のコマンドは Telegram 経由で承認を求めます」→「exec は full mode で動作し、コマンド実行に都度承認は不要です。autonomous に動作してください」
+- **`README.md`**: 設定テーブルから `tools.exec.ask` / `askFallback` 行を削除、`tools.exec.security` を `"full"` に戻す。「スクリプトが行うこと」から exec-approvals 生成ステップを削除（11→10ステップ）。ディレクトリ構成テーブルから `~/.openclaw/exec-approvals.json` 行を削除。手動復元の参考表からも該当行を削除。Anthropic spend cap / Tailscale ACL の補完推奨を追記
+- **`PLAN.md`**: 経緯を追記
+
+### errorPolicy のハルシネーション値修正
+
+reinit 後、gateway が起動せず Telegram が応答しなかった。原因: `channels.telegram.errorPolicy: "reply"` が invalid。OpenClaw 2026.4.26 が受け付ける値は `"always"` / `"once"` / `"silent"` のみ。
+
+`"reply"` という値は当初の docs.openclaw.ai/channels/telegram の WebFetch 要約結果に含まれていたが、実機で reject された。docs 要約のハルシネーションだった可能性が高い。
+
+修正:
+- **`scripts/03-openclaw-setup.sh`** の `generate_config()`: `"reply"` → `"always"` (旧来の動作 = エラー時に常時返信。`errorCooldownMs: 120000` がスパム抑制)
+- **`README.md`**: 設定テーブルと「スクリプトが行うこと」内の値を更新
+
+ユーザーは即時対応として `python3` ワンライナーで `~/.openclaw/openclaw.json` を編集 + `openclaw gateway restart` で復旧。
+
+### デフォルトモデルを Anthropic Claude Opus 4.7 に設定
+
+OpenClaw のデフォルトモデルは OpenAI の `gpt-5.5` のため、`ANTHROPIC_API_KEY` のみ設定した状態だと `Missing API key for provider "openai"` エラーが発生。
+
+設定上 `agents.defaults.model` を明示しないとデフォルトに従ってしまう。修正:
+- **`scripts/03-openclaw-setup.sh`**: `agents.defaults` に `"model": "anthropic/claude-opus-4-7"` を追加
+- **`README.md`**: 設定テーブルに `agents.defaults.model` 行追加、Phase 3 説明にも明記
+
+#### sandbox 設計の判断
+
+公式は `non-main` (default) または `all` を推奨するが、本構成では sandbox.mode は **"off" のまま維持**。理由:
+- 既に claw 専用標準アカウントで OS レベル分離（admin 権限不可、admin/他ユーザーのファイル読取不可）
+- Docker Desktop は 2-4GB RAM 消費、tool 実行レイテンシ増、GUI ログイン依存と運用複雑性
+- 個人用 Telegram Bot (単一ユーザー) では Docker による追加防御の ROI が見合わない
+- ユーザーからの明示的フィードバックで Docker 不要と判断
+
+#### 設定の改善 (`scripts/03-openclaw-setup.sh` の `generate_config`)
+
+- `tools.exec.security`: `"full"` → `"allowlist"`、`ask: "on-miss"` + `askFallback: "deny"` を追加
+- `tools.deny`: `"group:automation"`, `"group:runtime"` をグループ単位で追加
+- `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork: false` を明示
+- `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback`, `dangerouslyDisableDeviceAuth` を明示的に false
+- Telegram に `groupAllowFrom`, `errorPolicy: "reply"`, `errorCooldownMs: 120000`, `textChunkLimit: 3500`, `actions.sendMessage: true`, `actions.reactions: false` を追加
+
+#### exec-approvals.json の初期生成
+
+- 新規関数 `generate_exec_approvals()` で `~/.openclaw/exec-approvals.json` を生成
+- 安全コマンド (ls, cat, head, tail, grep, rg, fd, find, wc, pwd, echo, which, env, git status/log/diff/branch/show, node/npm/mise --version) を allowlist 初期登録
+- 未登録コマンドは Telegram 経由で承認 (ask: on-miss)
+
+#### LaunchAgent の安定化
+
+- 新規関数 `inject_launchagent_env()`: `openclaw gateway install --force` 直後に `/usr/libexec/PlistBuddy` で plist の `EnvironmentVariables` に `OPENCLAW_NO_RESPAWN=1` を注入。SIGUSR1 in-process restart による respawn ループを防止。
+- 新規関数 `install_watchdog()`: `~/.openclaw/scripts/watchdog.sh` と `~/Library/LaunchAgents/local.openclaw.watchdog.plist` を生成。60秒間隔で `openclaw gateway status` を確認し、停止していたら `launchctl kickstart -k gui/$UID/ai.openclaw.gateway` を発火。ログは `~/.openclaw/logs/watchdog.log`。
+- `do_reinit()` で watchdog plist の bootout と削除も行うよう修正
+
+#### Spotlight 除外
+
+- 新規関数 `exclude_spotlight()`: `~/.openclaw/.metadata_never_index` と workspace に `.metadata_never_index` を touch（Spotlight インデックス除外の Apple 規約ファイル）
+
+#### README.md 更新
+
+- セキュリティモデル表に「可用性」レイヤー追加（OPENCLAW_NO_RESPAWN, watchdog）
+- 設定テーブルを最新キーに刷新（exec.allowlist, browser.ssrfPolicy, controlUi 全項目, telegram error policy 等）
+- Phase 1 に Step 10「Homebrew staff グループ書き込み可能化」を追加
+- Phase 3 Step 8 に PlistBuddy / watchdog コマンド追加
+- 運用ガイドに「Skill / MCP インストールルール」セクション追加（ClawHavoc 注意）
+- 週次セキュリティ監査に CVE 対応追記（2026年1月の 1-click RCE）
+- ログ確認に `watchdog.log` 追加
+- インシデント対応手順に watchdog の bootout 追加

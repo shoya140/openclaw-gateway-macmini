@@ -43,9 +43,6 @@ prompt_secret() {
 
 OPENCLAW_DIR="$HOME/.openclaw"
 OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATES_DIR="$REPO_ROOT/templates"
 
 # ============================================================
 # Pre-flight checks
@@ -72,7 +69,7 @@ backup_and_reset() {
     info "  - workspace 中身 → snapshot/workspace に mv（実体ファイル。Google Drive からは消える）"
     info "  - personal PC 側の Google Drive にも空状態が反映されます"
 
-    info "Watchdog 停止中..."
+    info "旧 Watchdog があれば停止中（撤去済みだが古い環境のクリーンアップ）..."
     launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
@@ -507,15 +504,17 @@ setup_secrets() {
     if [[ -f "$env_file" ]]; then
         sed -i '' '/^TELEGRAM_BOT_TOKEN=/d' "$env_file"
         sed -i '' '/^ANTHROPIC_API_KEY=/d' "$env_file"
+        sed -i '' '/^OLLAMA_API_KEY=/d' "$env_file"
     fi
 
     cat >> "$env_file" << ENVEOF
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
 ANTHROPIC_API_KEY="${anthropic_key}"
+OLLAMA_API_KEY="ollama-local"
 ENVEOF
     chmod 600 "$env_file"
 
-    success "TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY を $env_file に設定"
+    success "TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, OLLAMA_API_KEY を $env_file に設定"
 
     info "確認中..."
     openclaw models status || true
@@ -585,8 +584,6 @@ start_and_verify() {
         warn "ログを確認してください: openclaw logs --follow"
     fi
 
-    install_watchdog
-
     step "9. セキュリティ監査"
     openclaw security audit || true
     echo
@@ -616,31 +613,6 @@ inject_launchagent_env() {
 
     success "OPENCLAW_NO_RESPAWN=1 を $plist に注入"
     info "config 変更時の SIGUSR1 in-process restart による respawn ループを防止"
-}
-
-# ============================================================
-# Watchdog LaunchAgent インストール
-# ============================================================
-install_watchdog() {
-    step "8.2 Watchdog LaunchAgent インストール"
-
-    local watchdog_script="$OPENCLAW_DIR/scripts/watchdog.sh"
-    local watchdog_plist="$HOME/Library/LaunchAgents/ai.openclaw.watchdog.plist"
-    local watchdog_log_dir="$OPENCLAW_DIR/logs"
-
-    mkdir -p "$(dirname "$watchdog_script")" "$watchdog_log_dir"
-
-    cp "$TEMPLATES_DIR/watchdog.sh" "$watchdog_script"
-    chmod 700 "$watchdog_script"
-
-    sed -e "s|@@WATCHDOG_SCRIPT@@|$watchdog_script|g" \
-        -e "s|@@WATCHDOG_LOG_DIR@@|$watchdog_log_dir|g" \
-        "$TEMPLATES_DIR/ai.openclaw.watchdog.plist" > "$watchdog_plist"
-
-    launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
-    launchctl bootstrap "gui/$UID" "$watchdog_plist"
-    success "Watchdog LaunchAgent 登録完了 (ai.openclaw.watchdog, 60秒間隔)"
-    info "ログ: $watchdog_log_dir/watchdog.log"
 }
 
 # ============================================================
@@ -706,7 +678,7 @@ main() {
     info "  5. 環境変数・APIキー設定"
     info "  6. ファイルパーミッション設定 + Spotlight 除外"
     info "  7. シェル補完 (zsh) インストール"
-    info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・watchdog インストール・検証"
+    info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・検証"
     if $recover; then
         info "  9. snapshot から workspace + cron を復元 (--recover)"
     fi
@@ -734,7 +706,7 @@ main() {
     info "再起動後の復旧手順:"
     info "  1. Tailscaleは自動接続 (LaunchDaemon)"
     info "  2. Screen Sharing で claw アカウントにログイン"
-    info "  3. OpenClaw は LaunchAgent で自動起動 (watchdog が60秒間隔で監視)"
+    info "  3. OpenClaw は LaunchAgent で自動起動 (KeepAlive によりプロセス死亡時に自動復帰)"
     info "  4. Google Drive の同期完了を確認"
     info "  5. Telegram からメッセージを送信して動作確認"
     info ""

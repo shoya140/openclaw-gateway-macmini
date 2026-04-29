@@ -425,6 +425,27 @@ OpenClaw のデフォルトモデルは OpenAI の `gpt-5.5` のため、`ANTHRO
 - **`scripts/03-openclaw-setup.sh`**: `agents.defaults` に `"model": "anthropic/claude-opus-4-7"` を追加
 - **`README.md`**: 設定テーブルに `agents.defaults.model` 行追加、Phase 3 説明にも明記
 
+### `--clean-workspace` 撤廃 → `--reinit` 標準動作に統合
+
+前ステップで `--clean-workspace` フラグを実装したが、ユーザーから「オプションなしで workspace も初期化されたい。snapshot 内に symlink ではなく実体ファイルとして workspace データを残してほしい」との要望。
+
+設計変更:
+- `--clean-workspace` フラグと `clean_workspace()` 関数を削除
+- `do_reinit()` の中で workspace 中身を snapshot に **実体ファイル** として退避
+  1. `cp -a ~/.openclaw → snapshot/`（workspace は一旦 symlink としてコピー）
+  2. snapshot 内の workspace symlink を `rm`、`mkdir -p snapshot/workspace`
+  3. `mv $WORKSPACE_REAL/* snapshot/workspace/`（dotfile 含めて全部、`shopt -s dotglob nullglob` 使用）
+  4. Google Drive 上の workspace は空状態に → personal PC にも sync で反映
+- AGENTS.md テンプレートから `_archive-*` 無視ルール削除（workspace に archive を作らなくなったため）
+- README の `--reinit` 説明を更新。スナップショットからの workspace 復元手順も追加（`cp -a "$SNAP/workspace/." "$WS/"` + symlink 張り直し）
+
+設計判断:
+- snapshot/workspace を symlink ではなく実体ファイルにする理由: snapshot を self-contained にする。Google Drive 側が消えても snapshot を見れば過去の workspace 内容を確認・復元できる
+- Google Drive 上の workspace を空にする理由: 「OpenClaw 初期状態」を厳密に再現。subfolder archive 方式だと Google Drive 側に古いデータが残ってエージェントから見える可能性があった
+- workspace 内容は `mv`（コピーではなく移動）する理由: ディスク使用量を増やさない、Google Drive 側からも消えるので状態が一意
+
+検証: bash + テストフィクスチャで snapshot/workspace に実体ファイル（AGENTS.md, .git, ユーザーファイル）が入り、GDrive workspace は空になることを確認。
+
 #### sandbox 設計の判断
 
 公式は `non-main` (default) または `all` を推奨するが、本構成では sandbox.mode は **"off" のまま維持**。理由:

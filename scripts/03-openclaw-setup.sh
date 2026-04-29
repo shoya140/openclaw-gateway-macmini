@@ -63,8 +63,11 @@ preflight() {
 # Reinit: アンインストール・クリーンアップ
 # ============================================================
 do_reinit() {
-    step "Reinit: スナップショット作成 + クリーン初期化"
-    warn "既存の ~/.openclaw を ~/.openclaw-snapshot-<ts>/ にコピーしてから削除します"
+    step "Reinit: スナップショット作成 + クリーン初期化（workspace 含む）"
+    warn "既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/ に退避してから削除します"
+    warn "  - ~/.openclaw → snapshot にコピー (cp -a)"
+    warn "  - workspace 中身 → snapshot/workspace に mv（symlink ではなく実体ファイル。Google Drive からは消える）"
+    warn "  - personal PC 側の Google Drive にも空状態が反映されます"
     warn "復元はユーザーが手動で行ってください（自動復元はしません）"
 
     if ! confirm "本当に実行しますか?"; then
@@ -77,11 +80,46 @@ do_reinit() {
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
 
+    # workspace symlink の実体パスを記録（後で中身を退避するため）
+    local workspace_real=""
+    if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
+        workspace_real=$(readlink "$OPENCLAW_DIR/workspace")
+    elif [[ -d "$OPENCLAW_DIR/workspace" ]]; then
+        workspace_real="$OPENCLAW_DIR/workspace"
+    fi
+
     if [[ -d "$OPENCLAW_DIR" ]]; then
         local snapshot_dir="$HOME/.openclaw-snapshot-$(date +%Y%m%d-%H%M%S)"
         cp -a "$OPENCLAW_DIR" "$snapshot_dir"
-        success "スナップショット作成: $snapshot_dir"
-        info "完全ロールバック: cp -a $snapshot_dir $OPENCLAW_DIR"
+        success "~/.openclaw → $snapshot_dir にコピー"
+
+        # snapshot 内の workspace symlink を実体ファイルで置き換える
+        # （Google Drive 上の workspace 中身を snapshot に mv する）
+        if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
+            rm -f "$snapshot_dir/workspace" 2>/dev/null || true   # snapshot 内の symlink 削除
+            mkdir -p "$snapshot_dir/workspace"
+
+            shopt -s dotglob nullglob
+            local entries=("$workspace_real"/*)
+            shopt -u dotglob nullglob
+
+            if [[ ${#entries[@]} -gt 0 ]]; then
+                mv "${entries[@]}" "$snapshot_dir/workspace/"
+                success "Workspace の中身 ${#entries[@]} 項目を $snapshot_dir/workspace/ に退避（実体ファイル）"
+                info "Google Drive 上の workspace は空になりました（personal PC にも数十秒〜数分で反映）"
+            else
+                rmdir "$snapshot_dir/workspace" 2>/dev/null || true
+                info "Workspace は既に空でした"
+            fi
+        else
+            info "Workspace symlink/ディレクトリが見つからないため workspace の退避をスキップ"
+        fi
+
+        info "完全ロールバック方法:"
+        info "  cp -a $snapshot_dir/workspace/* $workspace_real/ 2>/dev/null"
+        info "  cp -a $snapshot_dir/workspace/.[!.]* $workspace_real/ 2>/dev/null"
+        info "  rm -rf $OPENCLAW_DIR && cp -a $snapshot_dir $OPENCLAW_DIR"
+        info "  (~/.openclaw 復元時は workspace symlink が壊れるので detect_workspace 相当で張り直し)"
     else
         info "既存の ~/.openclaw が見つからないためスナップショットをスキップ"
     fi
@@ -95,14 +133,14 @@ do_reinit() {
     npm uninstall -g openclaw 2>/dev/null || true
 
     if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
-        info "workspace シンボリックリンクを削除（Google Drive 実体は保持）..."
+        info "workspace シンボリックリンクを削除（Google Drive 実体は空状態で保持）..."
         rm "$OPENCLAW_DIR/workspace"
     fi
 
     info "データディレクトリ削除中..."
     rm -rf "$OPENCLAW_DIR"
 
-    success "OpenClaw の初期化完了"
+    success "OpenClaw + workspace の初期化完了"
     echo
     info "再インストールを続行します..."
     echo
@@ -599,8 +637,9 @@ usage() {
     echo "OpenClaw のインストールと設定を行います。"
     echo ""
     echo "Options:"
-    echo "  --reinit    既存の ~/.openclaw を ~/.openclaw-snapshot-<ts>/ にコピーしてから削除し、"
-    echo "              再インストールする。スナップショットからの復元はユーザーが手動で行う。"
+    echo "  --reinit    既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/"
+    echo "              に退避してから両方とも初期状態にし、再インストールする。snapshot 内の workspace は"
+    echo "              symlink ではなく実体ファイル。スナップショットからの復元はユーザーが手動で行う。"
     echo "  --help      このヘルプを表示"
 }
 
@@ -659,7 +698,7 @@ main() {
     info "  4. Google Drive の同期完了を確認"
     info "  5. Telegram からメッセージを送信して動作確認"
     info ""
-    info "再インストールが必要な場合 (スナップショットからの復元は手動):"
+    info "再インストールが必要な場合 (~/.openclaw + workspace を初期化、スナップショットからの復元は手動):"
     info "  $0 --reinit"
 }
 

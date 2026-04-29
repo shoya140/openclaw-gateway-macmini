@@ -63,27 +63,20 @@ preflight() {
 }
 
 # ============================================================
-# Reinit: アンインストール・クリーンアップ
+# Backup existing install + reset (既存 ~/.openclaw があれば常時実行)
 # ============================================================
-do_reinit() {
-    step "Reinit: スナップショット作成 + クリーン初期化（workspace 含む）"
-    warn "既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/ に退避してから削除します"
-    warn "  - ~/.openclaw → snapshot にコピー (cp -a)"
-    warn "  - workspace 中身 → snapshot/workspace に mv（symlink ではなく実体ファイル。Google Drive からは消える）"
-    warn "  - personal PC 側の Google Drive にも空状態が反映されます"
-    warn "復元はユーザーが手動で行ってください（自動復元はしません）"
-
-    if ! confirm "本当に実行しますか?"; then
-        info "中止しました"
-        exit 0
-    fi
+backup_and_reset() {
+    step "0. 既存インストールをバックアップして初期化"
+    info "既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/ に退避します"
+    info "  - ~/.openclaw → snapshot にコピー (cp -a)"
+    info "  - workspace 中身 → snapshot/workspace に mv（実体ファイル。Google Drive からは消える）"
+    info "  - personal PC 側の Google Drive にも空状態が反映されます"
 
     info "Watchdog 停止中..."
     launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
 
-    # workspace symlink の実体パスを記録（後で中身を退避するため）
     local workspace_real=""
     if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
         workspace_real=$(readlink "$OPENCLAW_DIR/workspace")
@@ -91,40 +84,28 @@ do_reinit() {
         workspace_real="$OPENCLAW_DIR/workspace"
     fi
 
-    if [[ -d "$OPENCLAW_DIR" ]]; then
-        local snapshot_dir="$HOME/.openclaw-snapshot-$(date +%Y%m%d-%H%M%S)"
-        cp -a "$OPENCLAW_DIR" "$snapshot_dir"
-        success "~/.openclaw → $snapshot_dir にコピー"
+    local snapshot_dir="$HOME/.openclaw-snapshot-$(date +%Y%m%d-%H%M%S)"
+    cp -a "$OPENCLAW_DIR" "$snapshot_dir"
+    success "~/.openclaw → $snapshot_dir にコピー"
 
-        # snapshot 内の workspace symlink を実体ファイルで置き換える
-        # （Google Drive 上の workspace 中身を snapshot に mv する）
-        if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
-            rm -f "$snapshot_dir/workspace" 2>/dev/null || true   # snapshot 内の symlink 削除
-            mkdir -p "$snapshot_dir/workspace"
+    if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
+        rm -f "$snapshot_dir/workspace" 2>/dev/null || true
+        mkdir -p "$snapshot_dir/workspace"
 
-            shopt -s dotglob nullglob
-            local entries=("$workspace_real"/*)
-            shopt -u dotglob nullglob
+        shopt -s dotglob nullglob
+        local entries=("$workspace_real"/*)
+        shopt -u dotglob nullglob
 
-            if [[ ${#entries[@]} -gt 0 ]]; then
-                mv "${entries[@]}" "$snapshot_dir/workspace/"
-                success "Workspace の中身 ${#entries[@]} 項目を $snapshot_dir/workspace/ に退避（実体ファイル）"
-                info "Google Drive 上の workspace は空になりました（personal PC にも数十秒〜数分で反映）"
-            else
-                rmdir "$snapshot_dir/workspace" 2>/dev/null || true
-                info "Workspace は既に空でした"
-            fi
+        if [[ ${#entries[@]} -gt 0 ]]; then
+            mv "${entries[@]}" "$snapshot_dir/workspace/"
+            success "Workspace の中身 ${#entries[@]} 項目を $snapshot_dir/workspace/ に退避（実体ファイル）"
+            info "Google Drive 上の workspace は空になりました（personal PC にも数十秒〜数分で反映）"
         else
-            info "Workspace symlink/ディレクトリが見つからないため workspace の退避をスキップ"
+            rmdir "$snapshot_dir/workspace" 2>/dev/null || true
+            info "Workspace は既に空でした"
         fi
-
-        info "完全ロールバック方法:"
-        info "  cp -a $snapshot_dir/workspace/* $workspace_real/ 2>/dev/null"
-        info "  cp -a $snapshot_dir/workspace/.[!.]* $workspace_real/ 2>/dev/null"
-        info "  rm -rf $OPENCLAW_DIR && cp -a $snapshot_dir $OPENCLAW_DIR"
-        info "  (~/.openclaw 復元時は workspace symlink が壊れるので detect_workspace 相当で張り直し)"
     else
-        info "既存の ~/.openclaw が見つからないためスナップショットをスキップ"
+        info "Workspace symlink/ディレクトリが見つからないため workspace の退避をスキップ"
     fi
 
     info "LaunchAgent 削除中..."
@@ -143,10 +124,67 @@ do_reinit() {
     info "データディレクトリ削除中..."
     rm -rf "$OPENCLAW_DIR"
 
-    success "OpenClaw + workspace の初期化完了"
+    success "バックアップ + 初期化完了 → snapshot: $snapshot_dir"
     echo
-    info "再インストールを続行します..."
-    echo
+}
+
+# ============================================================
+# Find latest snapshot
+# ============================================================
+find_latest_snapshot() {
+    ls -1dt "$HOME"/.openclaw-snapshot-* 2>/dev/null | head -n 1
+}
+
+# ============================================================
+# Recover: 最新 snapshot から workspace + cron を復元
+# ============================================================
+do_recover() {
+    step "Recover: 最新 snapshot から workspace + cron を復元"
+
+    local snapshot_dir
+    snapshot_dir=$(find_latest_snapshot)
+
+    if [[ -z "$snapshot_dir" || ! -d "$snapshot_dir" ]]; then
+        warn "snapshot が見つかりません ($HOME/.openclaw-snapshot-*)。--recover をスキップします"
+        return
+    fi
+
+    info "Snapshot: $snapshot_dir"
+
+    if [[ -d "$snapshot_dir/workspace" ]]; then
+        local workspace_real=""
+        if [[ -L "$OPENCLAW_DIR/workspace" ]]; then
+            workspace_real=$(readlink "$OPENCLAW_DIR/workspace")
+        elif [[ -d "$OPENCLAW_DIR/workspace" ]]; then
+            workspace_real="$OPENCLAW_DIR/workspace"
+        fi
+
+        if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
+            shopt -s dotglob nullglob
+            local items=("$snapshot_dir/workspace"/*)
+            shopt -u dotglob nullglob
+            if [[ ${#items[@]} -gt 0 ]]; then
+                cp -a "${items[@]}" "$workspace_real/"
+                success "workspace 復元: $workspace_real （${#items[@]} 項目を Google Drive に書き戻し）"
+            else
+                info "snapshot/workspace は空でした"
+            fi
+        else
+            warn "workspace の実体パスを検出できませんでした (~/.openclaw/workspace)"
+        fi
+    else
+        info "snapshot に workspace がありません。スキップ"
+    fi
+
+    if [[ -d "$snapshot_dir/cron" ]]; then
+        cp -a "$snapshot_dir/cron" "$OPENCLAW_DIR/"
+        chmod -R go-rwx "$OPENCLAW_DIR/cron" 2>/dev/null || true
+        success "cron 復元: $OPENCLAW_DIR/cron"
+        info "Gateway を再起動して cron を読み込みます..."
+        openclaw gateway restart || warn "gateway restart に失敗。手動で実行してください"
+    else
+        info "snapshot に cron がありません。スキップ"
+    fi
 }
 
 # ============================================================
@@ -393,6 +431,9 @@ generate_config() {
         "enabled": false,
         "approvers": [${TELEGRAM_USER_ID}],
         "target": "dm"
+      },
+      "network": {
+        "autoSelectFamily": false
       }
     }
   },
@@ -614,25 +655,28 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "OpenClaw のインストールと設定を行います。"
+    echo "既存の ~/.openclaw がある場合は自動的に ~/.openclaw-snapshot-<ts>/ にバックアップを取り、"
+    echo "クリーン状態で再構築します。Google Drive 上の workspace 中身も snapshot に退避されます。"
+    echo "（初回セットアップ時はバックアップをスキップします）"
     echo ""
     echo "Options:"
-    echo "  --reinit    既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/"
-    echo "              に退避してから両方とも初期状態にし、再インストールする。snapshot 内の workspace は"
-    echo "              symlink ではなく実体ファイル。スナップショットからの復元はユーザーが手動で行う。"
-    echo "  --help      このヘルプを表示"
+    echo "  --recover  セットアップ完了後、最新の ~/.openclaw-snapshot-* から workspace と"
+    echo "             ~/.openclaw/cron を復元します。それ以外（identity, telegram, agents 等）の"
+    echo "             復元はユーザーが手動で行ってください。"
+    echo "  --help     このヘルプを表示"
 }
 
 # ============================================================
 # Main
 # ============================================================
 main() {
-    local reinit=false
+    local recover=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --reinit) reinit=true; shift ;;
-            --help)   usage; exit 0 ;;
-            *)        error "Unknown option: $1\nRun '$0 --help' for usage." ;;
+            --recover) recover=true; shift ;;
+            --help)    usage; exit 0 ;;
+            *)         error "Unknown option: $1\nRun '$0 --help' for usage." ;;
         esac
     done
 
@@ -641,8 +685,10 @@ main() {
     echo
     preflight
 
-    if $reinit; then
-        do_reinit
+    if [[ -d "$OPENCLAW_DIR" ]]; then
+        backup_and_reset
+    else
+        info "既存の ~/.openclaw が見つからないためバックアップをスキップ（初回セットアップ）"
     fi
 
     echo
@@ -655,6 +701,9 @@ main() {
     info "  6. ファイルパーミッション設定 + Spotlight 除外"
     info "  7. シェル補完 (zsh) インストール"
     info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・watchdog インストール・検証"
+    if $recover; then
+        info "  9. snapshot から workspace + cron を復元 (--recover)"
+    fi
     echo
 
     install_openclaw
@@ -669,6 +718,10 @@ main() {
     start_and_verify
     verify_telegram
 
+    if $recover; then
+        do_recover
+    fi
+
     echo
     step "OpenClaw Setup 完了!"
     info ""
@@ -679,8 +732,8 @@ main() {
     info "  4. Google Drive の同期完了を確認"
     info "  5. Telegram からメッセージを送信して動作確認"
     info ""
-    info "再インストールが必要な場合 (~/.openclaw + workspace を初期化、スナップショットからの復元は手動):"
-    info "  $0 --reinit"
+    info "snapshot から workspace + cron を復元する場合（次回セットアップ時に指定）:"
+    info "  $0 --recover"
 }
 
 main "$@"

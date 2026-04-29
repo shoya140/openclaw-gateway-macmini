@@ -97,7 +97,7 @@ Screen Sharing 等で claw にログインしてから実行する。
 - OpenClaw インストール（`npm install -g openclaw@latest`）
 - Google Drive 内の `openclaw-workspace` を自動検出し、`~/.openclaw/workspace` にシンボリックリンクを作成
 - ワークスペースに `AGENTS.md`（mise で CLI tool を自分で導入するルール、sudo/brew が必要な作業はユーザーへ依頼するルール）を配置
-- `~/.openclaw/openclaw.json` 生成（loopback / token auth / Tailscale Serve / Telegram allowlist / `exec.security: full` / `tools.deny: []` / `execApprovals: off` / `fs.workspaceOnly: true` / `ssrfPolicy` / `model.primary: anthropic/claude-opus-4-7`, `model.fallbacks: [anthropic/claude-sonnet-4-6]` / `channels.telegram.network.autoSelectFamily: false`（IPv6 経路の polling stall 回避のため IPv4 強制） 等。実値は [`scripts/03-openclaw-setup.sh`](scripts/03-openclaw-setup.sh) の `generate_config` を参照）
+- `~/.openclaw/openclaw.json` 生成（loopback / token auth / Tailscale Serve / Telegram allowlist / `exec.security: full` / `tools.deny: []` / `execApprovals: off` / `fs.workspaceOnly: true` / `ssrfPolicy` / `model.primary: anthropic/claude-opus-4-7`, `model.fallbacks: [anthropic/claude-sonnet-4-6]` / `channels.telegram.network.autoSelectFamily: false`（IPv6 経路の polling stall 回避のため IPv4 強制） / `channels.telegram.streaming.mode: "partial"` + `streaming.preview.toolProgress: false`（ツール進捗の逐次プレビューを抑止し送信スパムを軽減） 等。実値は [`scripts/03-openclaw-setup.sh`](scripts/03-openclaw-setup.sh) の `generate_config` を参照）
 - `TELEGRAM_BOT_TOKEN` / `ANTHROPIC_API_KEY` を `~/.openclaw/.env` に保存
 - `~/.openclaw` 700 / 設定ファイル 600 / Spotlight 除外
 - zsh 補完を `~/.openclaw/completions/openclaw.zsh` に生成し、`~/.zshrc` に source 行を追加（`openclaw completion --shell zsh --install --write-state`）

@@ -434,6 +434,12 @@ generate_config() {
       },
       "network": {
         "autoSelectFamily": false
+      },
+      "streaming": {
+        "mode": "partial",
+        "preview": {
+          "toolProgress": false
+        }
       }
     }
   },

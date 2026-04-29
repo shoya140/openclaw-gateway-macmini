@@ -1,73 +1,45 @@
 # OpenClaw Gateway on Mac Mini
 
-Mac MiniにOpenClawをインストールし、Telegramから利用するためのセットアップスクリプト + 運用マニュアル。
+Mac Mini に OpenClaw をインストールし、Telegram から利用するためのセットアップスクリプト + 運用マニュアル。
 
-## アーキテクチャ
+## 概要
 
 ```
-[Telegram] <---> [OpenClaw Gateway (localhost:18789)] <---> [LLM API (Anthropic/OpenAI等)]
+[Telegram] <---> [OpenClaw Gateway (localhost:18789)] <---> [LLM API (Anthropic 等)]
                         ↑
-              [Tailscale Serve (tailnet内のみアクセス可)]
+              [Tailscale Serve (tailnet 内のみアクセス可)]
 ```
 
-- OpenClaw GatewayはMac Mini上でlocalhostにバインド
-- 外部アクセスはTailscale Serve経由（tailnet内のみ）
-- Telegramとの通信はOpenClawのTelegramチャネル機能で実現
-- パブリックインターネットへのポート公開なし
+- Gateway は Mac Mini 上で loopback bind。外部アクセスは Tailscale Serve 経由（tailnet 内のみ）。パブリックポート開放なし
+- OpenClaw は専用の標準（非管理者）アカウント `claw` で実行。`sudo` / `brew` は OS レベルで使えないため、claw が乗っ取られても admin への昇格経路がない
+- ワークスペースは Google Drive 共有フォルダにあり、個人 PC と同期される。git 管理は個人 PC 側で行う
 
-## セキュリティモデル
+| レイヤー | 主な対策 |
+|---------|---------|
+| OS | 専用標準アカウント `claw`、ファイアウォール + ステルスモード、FileVault 無効（リモート復旧優先） |
+| ネットワーク | loopback bind、Tailscale Serve、`browser.ssrfPolicy.dangerouslyAllowPrivateNetwork: false` |
+| 認証 | Gateway トークン認証、Telegram allowlist（DM/グループ別）、execApprovals、controlUi の dangerous flags すべて off |
+| アプリ | sandbox off（OS 分離で代替）、`coding` profile、`tools.deny` で危険グループ遮断、`exec.security: full`、CLI tool は mise (aqua/ubi) で claw 配下に隔離 |
+| データ | `~/.openclaw` 700、設定ファイル 600、シークレットは `.env`、Spotlight 除外 |
+| 可用性 | `OPENCLAW_NO_RESPAWN=1` で respawn ループ防止、Watchdog LaunchAgent (60秒) で自己回復 |
 
-OpenClawは専用の標準（非管理者）アカウント `claw` で実行する。標準アカウントは管理者グループに属さないため、`sudo` がOSレベルで実行不可。`brew` は claw からは使用不可（`/opt/homebrew` は admin 所有のまま）。これは、claw を乗っ取った攻撃者が brew prefix のバイナリを差し替えて admin 実行時に権限昇格する経路を塞ぐため。CLI tool は mise（aqua/ubi バックエンド）で claw のホーム配下にインストールする。通常のシェルコマンドは自由に実行でき、権限昇格が必要な作業はTelegram経由でユーザーに依頼する。
-
-| レイヤー | 対策 |
-|---------|------|
-| **OS** | 専用標準アカウント `claw`（sudo・brew いずれも不可）、ファイアウォール + ステルスモード、FileVault無効（リモート復旧優先） |
-| **ネットワーク** | Gateway loopback bind、Tailscale Serve（tailnet内のみ）、パブリックポート開放なし、`browser.ssrfPolicy.dangerouslyAllowPrivateNetwork: false` |
-| **認証** | Gateway トークン認証、Telegram allowlist（DM/グループ別に数値ID限定）、execApprovals有効、controlUi の dangerous flags すべてオフ |
-| **アプリケーション** | sandbox mode off（OSアカウント分離で代替、Docker Desktop省略）、coding profile、`tools.deny` で group:automation/runtime/sessions/gateway/cron ブロック、`tools.exec.security: full`（claw 隔離下でエージェントを autonomous に動作させる方針）、CLI tool は mise (aqua/ubi) で claw 配下に隔離 |
-| **データ** | `~/.openclaw` mode 700、設定ファイル mode 600、シークレットは `.env` (mode 600) で管理、Spotlight 除外 |
-| **可用性** | OPENCLAW_NO_RESPAWN=1 で respawn ループ防止、watchdog LaunchAgent (60秒間隔) で gateway 自己回復 |
-
-## プロジェクト構成
-
-```
-scripts/
-  01-admin-macos-setup.sh     # 管理者: macOSセキュリティ + Tailscale + clawアカウント
-  02-claw-user-setup.sh       # claw: Google Drive + mise + Node.js
-  03-openclaw-setup.sh        # claw: OpenClawインストール・設定（--reinitで再インストール可）
-README.md                     # 本ドキュメント（セットアップガイド + 運用マニュアル）
-PLAN.md                       # 計画書・作業ステップ
-LOG.md                        # 作業ログ
-```
-
-## ディレクトリ構成（Mac Mini上）
-
-| パス | 内容 | アクセス |
-|------|------|---------|
-| `~/.openclaw/` | 設定、認証、エージェント状態、セッション、skill、logs/、scripts/ 等 | claw のみ（管理者は sudo） |
-| `~/.openclaw/openclaw.json` | gateway/channels/tools/agents 設定（mode 600） | claw |
-| `~/.openclaw/.env` | TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY（mode 600） | claw |
-| `~/.openclaw/scripts/watchdog.sh` | watchdog 本体スクリプト | claw |
-| `~/.openclaw/logs/watchdog.log` | watchdog による gateway 再起動ログ | claw |
-| `~/.openclaw/workspace/` | デフォルトワークスペース（→ Google Driveへのシンボリックリンク） | claw |
-| `~/.openclaw-snapshot-<ts>/` | `--reinit` 実行時に自動作成されるスナップショット | claw |
-| `~/Library/LaunchAgents/ai.openclaw.gateway.plist` | OpenClaw Gateway LaunchAgent (`OPENCLAW_NO_RESPAWN=1` 注入済) | claw |
-| `~/Library/LaunchAgents/local.openclaw.watchdog.plist` | Watchdog LaunchAgent (60秒間隔) | claw |
-| `~/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace/` | ワークスペース実体（Google Drive同期） | claw（Google Drive経由で個人PCと共有） |
-| `~/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace/AGENTS.md` | エージェント向けシステムプロンプト | claw |
+> `exec.security: full` は autonomy 重視で都度承認なし。設定では防げない領域は別レイヤーで補う:
+> - **Anthropic console で月額 spend cap** を設定（API キー流出時の被害金額を有限化）
+> - **Tailscale ACL** で Mac Mini ノードから他 tailnet ノードへの egress を制限
+>
+> CVE 動向（2026年1月の 1-click RCE、ClawHavoc キャンペーン等）に対応するため、`claw` で週次に `openclaw security audit --deep` + `npm outdated -g openclaw` を実行する。
 
 ---
 
-## 前提条件
+## 準備物
 
-- Mac Mini (Apple Silicon推奨)
-- macOS 15以降
+- Mac Mini（Apple Silicon 推奨）+ macOS 15 以降
 - インターネット接続
-- Homebrewインストール済み（管理者アカウント）
-- Telegramアカウント
-- LLM APIキー (Anthropic, OpenAI等)
-- Open Claw専用Googleアカウント（事前に作成済み）
-- 個人のGoogle Driveでワークスペースフォルダ `openclaw-workspace` を作成し、Open Clawアカウントを「編集者」として共有済み
+- 管理者アカウントに Homebrew インストール済み
+- Telegram アカウント + BotFather で作成した Bot Token + 自分の User ID（`@userinfobot` で確認）
+- LLM API キー（Anthropic 等）
+- OpenClaw 専用 Google アカウント
+- 個人の Google Drive で `openclaw-workspace` フォルダを作成し、専用 Google アカウントを「編集者」として共有済み
 
 ---
 
@@ -84,531 +56,144 @@ LOG.md                        # 作業ログ
 ./scripts/03-openclaw-setup.sh
 ```
 
----
-
-## Phase 1: macOS Admin Setup
-
-> **管理者アカウント**で実行する。
-
-### 実行
-
-```bash
-./scripts/01-admin-macos-setup.sh
-```
-
-### スクリプトが行うこと
-
-1. **ファイアウォール + ステルスモード有効化**
-   ```bash
-   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
-   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
-   ```
-
-2. **管理者ホームディレクトリ保護** (`chmod 700 ~/`)
-
-3. **スリープ防止設定** (24/7運用)
-   ```bash
-   sudo pmset -a sleep 0 disksleep 0 displaysleep 0
-   sudo pmset -a hibernatemode 0 powernap 0
-   sudo pmset -a standby 0 autopoweroff 0
-   sudo pmset -a autorestart 1
-   ```
-
-4. **自動ログイン無効化**
-   ```bash
-   sudo sysadminctl -autologin off
-   ```
-
-5. **Screen Sharing有効化** - CLIで有効化を試みるが、macOS 12.1+のTCC制限により手動設定が必要な場合がある
-   - CLIで有効化できない場合、スクリプトがGUI操作を指示する
-   - VNCパスワードアクセスは手動で無効化する必要あり（Tailscale経由のみ使用のため）
-
-6. **SSH (リモートログイン) 有効化**
-   ```bash
-   sudo systemsetup -setremotelogin on
-   ```
-
-7. **Tailscaleインストール・認証** (`brew install tailscale` → `sudo brew services start tailscale` → `sudo tailscale up`)
-
-8. **`claw` 標準アカウント作成** - パスワード入力を求められる
-   ```bash
-   sudo sysadminctl -addUser claw -fullName "OpenClaw" -password "<password>"
-   ```
-
-9. **Google Drive for Desktopインストール** (`brew install --cask google-drive`)
-
-10. **Tailscale Serve設定**
-    ```bash
-    sudo tailscale serve --bg http://127.0.0.1:18789
-    ```
-
-### FileVaultについて
-
-FileVaultは**無効のまま**とする。有効にするとコールドブート時に物理的なパスワード入力が必須となり、停電後のリモート復旧ができなくなるため。
-
-### 手動で確認が必要な項目
-
-- Screen Sharing の VNCパスワードアクセスが無効であること
-- 再起動後にTailscaleが自動接続されること（`tailscale status`）
+再インストール（既存環境を初期化してやり直したい場合）は `./scripts/03-openclaw-setup.sh --reinit`。詳細は [バックアップ / リストア](#バックアップ--リストア) 参照。
 
 ---
 
-## Phase 2: Claw User Setup
+## 各スクリプトが行うこと
 
-> **`claw` アカウント**で実行する（Screen Sharing等でclawにログイン）。
+### `01-admin-macos-setup.sh`（管理者アカウント）
 
-### 実行
+- ファイアウォール + ステルスモード有効化
+- 24/7 運用向け `pmset`（スリープ無効、再起動後の自動復帰）
+- 自動ログイン無効化、Screen Sharing 有効化、SSH 有効化
+- Tailscale インストール・認証 + `tailscale serve --bg http://127.0.0.1:18789`
+- `claw` 標準アカウント作成（パスワード対話入力）
+- Google Drive for Desktop インストール
 
-```bash
-./scripts/02-claw-user-setup.sh
-```
+> **手動確認が必要**:
+> - Screen Sharing の VNC パスワードアクセスが無効であること（Tailscale 経由のみ使用）
+> - 再起動後に Tailscale が自動接続されること（`tailscale status`）
+>
+> **FileVault は無効のまま**。有効にするとコールドブート時にリモート復旧ができなくなるため。
 
-### スクリプトが行うこと
+### `02-claw-user-setup.sh`（`claw` アカウント）
 
-1. **Google Driveセットアップ** (GUI操作) - スクリプトがGoogle Driveアプリを起動し、以下の手順を指示する:
-   - Open Claw専用Googleアカウントでサインイン
-   - 同期モードを「ミラーリング」に設定
-   - 共有フォルダをMy Driveに追加
+Screen Sharing 等で claw にログインしてから実行する。
 
-2. **miseインストール** (`curl https://mise.run | sh` + シェル統合)
+- Google Drive セットアップ（GUI 操作。専用 Google アカウントでサインイン → ミラーリング → 共有フォルダ追加。スクリプトが指示する）
+- mise インストール + シェル統合
+- Node.js インストール（`mise use -g node@24`）
+- sudo / brew が claw から使えないことの自動検証
 
-3. **Node.jsインストール** (`mise use -g node@24`)
+### `03-openclaw-setup.sh`（`claw` アカウント）
 
-4. **権限制限の確認** - sudo/brewが使えないことを自動検証
+対話で Telegram Bot Token / User ID / Anthropic API Key を入力する。
+
+- OpenClaw インストール（`npm install -g openclaw@latest`）
+- Google Drive 内の `openclaw-workspace` を自動検出し、`~/.openclaw/workspace` にシンボリックリンクを作成
+- ワークスペースに `AGENTS.md`（mise で CLI tool を自分で導入するルール、sudo/brew が必要な作業はユーザーへ依頼するルール）を配置
+- `~/.openclaw/openclaw.json` 生成（loopback / token auth / Tailscale Serve / Telegram allowlist / `exec.security: full` / `tools.deny` / `ssrfPolicy` / `model.primary: anthropic/claude-opus-4-7`, `model.fallbacks: [anthropic/claude-sonnet-4-6]` 等。実値は [`scripts/03-openclaw-setup.sh`](scripts/03-openclaw-setup.sh) の `generate_config` を参照）
+- `TELEGRAM_BOT_TOKEN` / `ANTHROPIC_API_KEY` を `~/.openclaw/.env` に保存
+- `~/.openclaw` 700 / 設定ファイル 600 / Spotlight 除外
+- Gateway LaunchAgent 登録 + `OPENCLAW_NO_RESPAWN=1` 注入 + Watchdog LaunchAgent (60秒間隔) 登録
+- `openclaw security audit` 実行
+
+実行後、Telegram から Bot に DM して応答が返れば完了。
 
 ---
 
-## Phase 3: OpenClaw Setup
+## モデルの切り替え
 
-> **`claw` アカウント**で実行する。
-
-### 初回インストール
+デフォルトは `anthropic/claude-opus-4-7`（primary）+ `anthropic/claude-sonnet-4-6`（fallback）。別モデルに切り替えるには `claw` アカウントで:
 
 ```bash
-./scripts/03-openclaw-setup.sh
-```
-
-### スクリプトが行うこと
-
-1. **OpenClawインストール** (`npm install -g openclaw@latest`)
-
-2. **Telegram Bot情報入力** - 以下を対話的に入力:
-   - Bot Token (BotFatherから取得)
-   - 自分のTelegram User ID (数値)
-
-3. **ワークスペースパス検出 + シンボリックリンク作成** - Google Drive内の `openclaw-workspace` フォルダを自動検出し、`~/.openclaw/workspace` にシンボリックリンクを作成（`agent.workspace` 設定は不要）
-
-4. **AGENTS.md 生成** - ワークスペースにエージェント向けシステムプロンプト (`AGENTS.md`) を配置。mise (aqua/ubi バックエンド) で CLI tool を自分で導入するルール、sudo/brew が必要な作業はユーザーへ依頼するルールを記載
-
-5. **`openclaw.json` 生成** (`~/.openclaw/openclaw.json`)
-   - Gateway: loopback bind, port 18789, token auth (自動生成), Tailscale Serve, controlUi の dangerous flags すべて off + 自動検出した Tailscale ホスト名で `allowedOrigins` 設定
-   - Telegram: dmPolicy/groupPolicy ともに `allowlist`、`allowFrom`/`groupAllowFrom` 分離、`errorPolicy: always` + `errorCooldownMs: 120000`、`textChunkLimit: 3500`、execApprovals (target: dm)
-   - Tools: `coding` profile、`fs.workspaceOnly: true`、`exec.security: full` (claw 隔離下で autonomous 実行)、`deny` に group:automation/runtime/sessions_spawn/sessions_send/gateway/cron
-   - Browser: `ssrfPolicy.dangerouslyAllowPrivateNetwork: false`
-   - エージェント: デフォルトモデル `anthropic/claude-opus-4-7`、`sandbox.mode: off` (OS アカウント分離で代替)
-
-6. **シークレット設定** - `TELEGRAM_BOT_TOKEN` と `ANTHROPIC_API_KEY` を `~/.openclaw/.env` に保存
-
-7. **ファイルパーミッション設定** (`~/.openclaw`: 700, 設定ファイル: 600, `~/.openclaw/credentials/` 配下のファイル: 600)
-
-8. **Spotlight インデックス除外** - `~/.openclaw/.metadata_never_index` を作成。ワークスペース側にも書き込み可能ならば同様
-
-9. **Gateway デーモン登録・起動・検証**
-    ```bash
-    openclaw gateway install --force
-    # OPENCLAW_NO_RESPAWN=1 を LaunchAgent plist の EnvironmentVariables に注入
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENCLAW_NO_RESPAWN string 1" \
-      ~/Library/LaunchAgents/ai.openclaw.gateway.plist
-    openclaw doctor --fix
-    openclaw gateway restart
-    # Watchdog LaunchAgent を登録 (60秒ごとに gateway 状態をチェックし、停止していたら kickstart)
-    launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/local.openclaw.watchdog.plist
-    openclaw security audit
-    openclaw security audit --deep
-    openclaw doctor
-    openclaw status
-    ```
-
-10. **Telegram動作確認** - Botへのメッセージ送信を確認
-
-### Telegram Bot の事前準備
-
-スクリプト実行前にBotを作成しておく:
-
-1. Telegramで `@BotFather` を検索してチャットを開く
-2. `/newbot` を送信
-3. Bot名とユーザー名を入力
-4. 表示される **Bot Token** を安全にコピー
-5. グループで使う場合: `/setprivacy` → 作成したBotを選択 → `Disable`
-
-自分のTelegram User IDは `@userinfobot` にメッセージを送って確認できる。
-
-### 生成される設定ファイルの内容
-
-スクリプトが生成する `~/.openclaw/openclaw.json` の主要設定:
-
-| 設定項目 | 値 |
-|---------|-----|
-| `gateway.mode` | `"local"` |
-| `gateway.port` | `18789` |
-| `gateway.bind` | `"loopback"` |
-| `gateway.auth.mode` | `"token"` |
-| `gateway.auth.token` | (スクリプトが自動生成) |
-| `gateway.tailscale.mode` | `"serve"` |
-| `gateway.controlUi.allowInsecureAuth` | `false` |
-| `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback` | `false` |
-| `gateway.controlUi.dangerouslyDisableDeviceAuth` | `false` |
-| `gateway.controlUi.allowedOrigins` | (Tailscale Serve の URL を自動検出) |
-| `channels.telegram.dmPolicy` | `"allowlist"` |
-| `channels.telegram.groupPolicy` | `"allowlist"` |
-| `channels.telegram.allowFrom` / `groupAllowFrom` | (User ID を分離して設定) |
-| `channels.telegram.errorPolicy` | `"always"` (エラー時に常時返信、`errorCooldownMs` でスパム防止) |
-| `channels.telegram.errorCooldownMs` | `120000` (スパム防止) |
-| `channels.telegram.textChunkLimit` | `3500` |
-| `channels.telegram.actions.deleteMessage`/`reactions`/`sticker` | `false` |
-| `channels.telegram.execApprovals.enabled` | `true` |
-| `channels.telegram.execApprovals.target` | `"dm"` |
-| `tools.profile` | `"coding"` |
-| `tools.deny` | `["group:automation", "group:runtime", "sessions_spawn", "sessions_send", "gateway", "cron"]` |
-| `tools.fs.workspaceOnly` | `true` |
-| `tools.exec.security` | `"full"` (claw 隔離下で autonomous 実行、都度承認なし) |
-| `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork` | `false` |
-| `agents.defaults.model` | `"anthropic/claude-opus-4-7"` (Anthropic Claude Opus 4.7) |
-| `agents.defaults.sandbox.mode` | `"off"` (OSアカウント分離で代替) |
-| `session.dmScope` | `"per-channel-peer"` |
-| `discovery.mdns.mode` | `"minimal"` |
-| `logging.redactSensitive` | `"tools"` |
-
-`exec.security: full` のため `~/.openclaw/exec-approvals.json` は生成しない。autonomy 重視で都度承認なしの構成。OS レベルの隔離（claw 標準アカウント、`~/.openclaw` 700、`tools.deny` のグループ単位ブロック、`tools.fs.workspaceOnly`、`browser.ssrfPolicy`）が主防御。
-
-> **補完すべきコスト・ネットワーク制御**: `exec=full` では API 暴走や tailnet ピボットを設定では防げない。以下を別レイヤーで設定推奨:
-> - **Anthropic console で月額 spend cap** を設定（API キー流出時の被害金額を有限化）
-> - **Tailscale ACL** で Mac Mini ノードから他 tailnet ノードへの egress を制限
-
-### 再インストール（スナップショット + 完全初期化）
-
-```bash
-./scripts/03-openclaw-setup.sh --reinit
-```
-
-`--reinit` は **`~/.openclaw` だけでなく Google Drive 上の workspace 内容も初期状態に戻す**:
-
-1. **スナップショット作成**: `~/.openclaw-snapshot-<timestamp>/` を作成
-   - `cp -a ~/.openclaw → snapshot/` (workspace は一旦 symlink としてコピー)
-   - **snapshot 内の workspace symlink を削除し、Google Drive 上の workspace 中身（dotfile・`.git` 含む全項目）を `mv` で snapshot/workspace に移動**
-   - 結果: snapshot は **symlink ではなく実体ファイル** で workspace データを保持。Google Drive workspace は空になる
-2. **クリーンアップ**: Watchdog 停止 → Gateway 停止 → LaunchAgent 削除 → npm uninstall → `~/.openclaw/` 削除
-3. **再構築**: 上記「スクリプトが行うこと」の通常フローを再実行（Bot Token / User ID / API Key は対話的に再入力）。`detect_workspace` が空の Google Drive workspace に新しい symlink を張り直し、`generate_agents_md` が新しい AGENTS.md だけを書き込む
-
-結果として、`~/.openclaw` も Google Drive workspace も「OpenClaw 初期状態（AGENTS.md のみ）」に戻る。Personal PC 側にも空状態が Google Drive sync 経由で反映される（数十秒〜数分）。
-
-**スナップショットからの復元はユーザーが手動で行う。** どのファイルを引き継ぐかを把握しておくため、自動復元はしない方針。
-
-> snapshot/workspace は実体ファイルなので、Mac mini ローカルだけで完結する self-contained なバックアップとして機能します。Google Drive 上から消えても、Mac mini に残った snapshot を見れば過去の workspace 内容を確認・復元できます。
-
-#### 手動復元の参考
-
-スナップショット `~/.openclaw-snapshot-<ts>/` から、必要に応じて新しい `~/.openclaw/` にコピーする。
-
-##### 推奨コマンド
-
-スナップショットのパスを変数に入れる:
-```bash
-SNAP=~/.openclaw-snapshot-<ts>   # 実際のディレクトリ名に置き換え
-```
-
-**最低限の復元（同じ Telegram Bot が継続使用できる状態）:**
-```bash
-cp -a "$SNAP/identity" ~/.openclaw/
-cp -a "$SNAP/telegram" ~/.openclaw/
-openclaw gateway restart
-```
-- `identity/`: デバイス identity・暗号鍵。pairing をやり直さないために必須
-- `telegram/`: Telegram pairing 状態・update offset
-
-**履歴・メモリも引き継ぐ場合**は追加で:
-```bash
-cp -a "$SNAP/agents" "$SNAP/memory" "$SNAP/media" ~/.openclaw/
-openclaw gateway restart
-```
-- `agents/`: セッション履歴・エージェント状態
-- `memory/`: 累積メモリ（FTS index, vector DB）
-- `media/`: 受信メディア（`agents/` のセッションが ID で参照しているため、`agents/` を復元するならセットで）
-
-**Workspace 内容を Google Drive 上に書き戻す**（reinit で AGENTS.md のみの状態になっている場合）:
-```bash
-WS=$(readlink ~/.openclaw/workspace)   # Google Drive 上の実パスを解決
-# dotfile も含めて戻す（AGENTS.md は新生成のものを保持したいなら別途バックアップして戻す）
-shopt -s dotglob
-cp -a "$SNAP/workspace/." "$WS/"
-shopt -u dotglob
-```
-Google Drive sync 経由で personal PC にも数分以内に反映されます。
-
-##### 個別判断項目
-
-| 復元候補 | コマンド例 | 復元する判断 |
-|---------|----------|------|
-| `flows/`, `tasks/`, `cron/` | `cp -a "$SNAP/flows" ~/.openclaw/` 等 | カスタム定義していたら復元、デフォルトのままなら不要 |
-| `plugins/`, `plugin-runtime-deps/` | `cp -a "$SNAP/plugins" ~/.openclaw/` | プラグイン導入していたら復元 |
-| `acpx/`, `browser/`, `canvas/`, `completions/`, `delivery-queue/`, `devices/`, `qqbot/` | 各々 `cp -a` | runtime キャッシュ系。基本不要、容量小さいので一括復元でも害なし |
-| `skills/`, `TOOLS.md` (もしあれば) | `cp -a "$SNAP/skills" ~/.openclaw/` 等 | 個別判断 |
-
-##### 復元しないもの（スキップ推奨）
-
-| 項目 | 理由 |
-|------|------|
-| `exec-approvals.json` | `exec.security: full` 構成では不要 |
-| `openclaw.json.bak*`, `*.last-good`, `update-check.json` | 履歴ファイル。新 config と競合する |
-| `logs/` | 古いログは不要、容量大 |
-| `workspace` (symlink) | 新 install 側で再作成済み（同じ Google Drive を指している）|
-
-##### gateway.auth.token を引き継ぐ場合（リモートクライアント再設定回避）
-
-```bash
-old_token=$(python3 -c "import json; print(json.load(open('$SNAP/openclaw.json'))['gateway']['auth']['token'])")
-python3 -c "
-import json
-p='$HOME/.openclaw/openclaw.json'
-c=json.load(open(p))
-c['gateway']['auth']['token']='$old_token'
-open(p,'w').write(json.dumps(c, indent=2)+'\n')
-"
-chmod 600 ~/.openclaw/openclaw.json
+openclaw models set <provider/model>     # primary を変更
 openclaw gateway restart
 ```
 
-##### 後始末
+または `~/.openclaw/openclaw.json` の `agents.defaults.model.primary` / `model.fallbacks` を直接編集して `openclaw gateway restart`。
 
-復元後、サービスが反映されているか確認:
+### Ollama（ローカル LLM）に切り替える例
+
+Mac Mini 上の Ollama (`http://127.0.0.1:11434`) で起動済みのモデルに切り替える場合:
+
 ```bash
+# 1. ローカル検出を有効化（marker placeholder。実際の API キーではない）
+echo 'OLLAMA_API_KEY="ollama-local"' >> ~/.openclaw/.env
+chmod 600 ~/.openclaw/.env
+
+# 2. プライマリモデルを ollama/qwen3.6:35b-a3b に切り替え
+openclaw models set ollama/qwen3.6:35b-a3b
+
+# 3. Anthropic を fallback として残したい場合は openclaw.json を直接編集
+#    "model": { "primary": "ollama/qwen3.6:35b-a3b",
+#               "fallbacks": ["anthropic/claude-opus-4-7"] }
+
 openclaw gateway restart
-launchctl kickstart -k "gui/$UID/local.openclaw.watchdog"
-openclaw doctor
+openclaw models status   # primary / fallbacks / 認証状態を確認
 ```
 
-動作確認できたらスナップショット削除:
-```bash
-rm -rf "$SNAP"
-```
-
-##### 完全ロールバック（再インストールをなかったことにする）
-
-snapshot は workspace を symlink ではなく実体で保持しているので、復元時は Google Drive 上にも手動で書き戻す必要がある:
-
-```bash
-# 1. Google Drive 上の workspace パスを取得（reinit 後の新 symlink 経由）
-WS=$(readlink ~/.openclaw/workspace)
-
-# 2. workspace 内容を Google Drive に書き戻す
-shopt -s dotglob
-cp -a "$SNAP/workspace/." "$WS/"
-shopt -u dotglob
-
-# 3. ~/.openclaw を snapshot で置き換え
-rm -rf ~/.openclaw
-cp -a "$SNAP" ~/.openclaw
-# snapshot 内の workspace は実体ディレクトリなので、symlink を張り直す必要あり
-rm -rf ~/.openclaw/workspace
-ln -s "$WS" ~/.openclaw/workspace
-
-# 4. サービス再起動
-openclaw gateway restart
-launchctl kickstart -k "gui/$UID/local.openclaw.watchdog"
-```
+> Ollama は `127.0.0.1:11434` がデフォルトなので追加の `providers` 設定は不要。別ホストやポートを使う場合は `models.providers.ollama.baseUrl` を `openclaw.json` に明示する。
 
 ---
 
 ## 再起動後のリモート復旧手順
 
-Mac Miniが再起動した場合（停電、macOSアップデート等）の手順:
-
-1. **Tailscaleは自動的にtailnetに接続済み**（LaunchDaemon）
-2. 別のTailscale接続済みMacからScreen Sharingで **`claw` アカウント**にログイン:
-   ```bash
-   open vnc://<mac-mini-tailscale-ip>
-   ```
-3. `claw` アカウントのパスワードを入力してログイン → OpenClaw Gateway LaunchAgent + watchdog LaunchAgent + Google Drive for Desktop がそれぞれ自動起動
-4. Google Driveの同期が完了していることを確認（メニューバーのGoogle Driveアイコン）
-5. `openclaw status` で gateway が起動済みであることを確認（万一停止していても 60秒以内に watchdog が `launchctl kickstart` で再起動する）
-6. 画面をロック: `Ctrl+Cmd+Q`
-7. Telegramからメッセージを送信して動作確認
+Mac Mini が再起動した場合（停電・macOS アップデート等）、Tailscale は LaunchDaemon で自動接続される。別の Tailscale 接続済み Mac から `open vnc://<mac-mini-tailscale-ip>` で **claw アカウント**にログインすれば、Gateway LaunchAgent + Watchdog LaunchAgent + Google Drive for Desktop が自動起動する。Google Drive の同期と `openclaw status` の起動を確認し、`Ctrl+Cmd+Q` で画面ロックして Telegram から疎通確認する。万一 Gateway が停止していても 60 秒以内に Watchdog が `launchctl kickstart` で再起動する。
 
 ---
 
-## 運用ガイド
+## バックアップ / リストア
 
-### 管理者作業が必要な場面
-
-claw からは sudo も brew も使えないため、以下は admin での手作業になる:
-- `sudo` を要する設定変更（pmset, systemsetup, /Library/LaunchDaemons/ 等）
-- `brew install` / `brew install --cask` 全般
-- システム全体に影響する変更（FileVault, Tailscale 設定等）
-
-claw 自身が新しい CLI tool を必要とする場合は、mise の aqua/ubi バックエンドで自分でインストールする（admin への依頼は不要）。
-
-OpenClawがTelegram経由で管理者権限が必要な作業を依頼してきた場合:
-
-1. SSH or Screen Sharingで**管理者アカウント**にログイン
-2. OpenClawが提示したコマンドを実行
-3. Telegramで完了を報告
-
-### ワークスペースのバージョン管理
-
-ワークスペースはGoogle Drive経由で個人PCと同期される。**git管理は個人PC側でのみ行う。**
-
-#### 個人PC側の初期設定
-
-Google Drive内のワークスペースで普通にgit initする:
+### `--reinit` でスナップショット作成
 
 ```bash
-cd ~/Library/CloudStorage/GoogleDrive-<personal-account>/My\ Drive/openclaw-workspace
-git init
-git config user.name "個人の名前"
-git config user.email "個人のメール"
+./scripts/03-openclaw-setup.sh --reinit
 ```
 
-`.git`はGoogle Drive経由でMac Mini側にも同期されるが、Mac Mini側のエージェントはgitを使わないため問題なし。git操作は個人PCでのみ行う。
+`~/.openclaw` だけでなく **Google Drive 上の workspace 内容も初期状態に戻す**。流れ:
 
-推奨 `.gitignore`:
-```
-*.log
-*.jsonl
-node_modules/
-.env
-.env.local
-credentials/
-.DS_Store
-```
+1. `~/.openclaw-snapshot-<timestamp>/` を作成し、`~/.openclaw` をコピー。Google Drive 上の workspace 中身（dotfile / `.git` 含む全項目）は snapshot に **`mv`**（symlink ではなく実体）。Google Drive workspace は空になる
+2. Watchdog / Gateway / LaunchAgent を停止・削除し、npm uninstall + `~/.openclaw/` 削除
+3. 通常フロー（Bot Token / User ID / API Key を対話で再入力）で再構築。空の Google Drive workspace に symlink を張り直し、新しい `AGENTS.md` だけが配置される
 
-### 定期セキュリティ監査
+snapshot は workspace 実体を含む self-contained なバックアップで、Google Drive から消えても Mac Mini 上に残る。**復元は手動。**
 
-`claw` アカウントで週次実行（CVE 対応のため OpenClaw 本体の更新も含む）:
+### 手動リストア
+
 ```bash
-openclaw security audit --deep
-openclaw doctor --fix
-npm outdated -g openclaw    # 更新があるか確認
-```
+SNAP=~/.openclaw-snapshot-<ts>   # 実際のディレクトリ名に置き換え
 
-> **注意**: 2026年1月に 1-click account takeover → RCE の CVE が報告されている。最新版維持が critical。
+# 最低限（同じ Telegram Bot を継続使用するなら必須）
+cp -a "$SNAP/identity" "$SNAP/telegram" ~/.openclaw/
 
-### アップデート
+# 履歴・メモリも引き継ぐ場合
+cp -a "$SNAP/agents" "$SNAP/memory" "$SNAP/media" ~/.openclaw/
 
-`claw` アカウントで実行:
-```bash
-npm update -g openclaw@latest
-openclaw gateway restart    # 内部で SIGUSR1 を送るが、OPENCLAW_NO_RESPAWN=1 で respawn ループ防止
-openclaw security audit
-```
+# workspace を Google Drive に書き戻す
+WS=$(readlink ~/.openclaw/workspace)
+shopt -s dotglob; cp -a "$SNAP/workspace/." "$WS/"; shopt -u dotglob
 
-restart が不安定な場合は launchd に直接 kickstart を発火:
-```bash
-launchctl kickstart -k "gui/$UID/ai.openclaw.gateway"
-```
-
-Node.jsのアップデートが必要な場合も `claw` アカウントで（mise経由）:
-```bash
-mise use -g node@24
-```
-
-### Skill / MCP サーバーのインストール
-
-> **注意**: 2026年1月の ClawHavoc キャンペーンで ClawHub レジストリの skill 数百件にマルウェア混入。
-
-skill を導入する場合のルール:
-- 自動更新は**無効**（バージョンピン）
-- 公式署名付きのみ
-- 導入前に `openclaw security audit --deep` でベースラインを取り、導入後と比較
-- skill のソースを目視レビュー
-
-### APIキーのローテーション
-
-`claw` アカウントで `~/.openclaw/.env` の `ANTHROPIC_API_KEY` を更新し、Gateway再起動:
-```bash
-vi ~/.openclaw/.env
 openclaw gateway restart
 ```
 
-### ログの確認
+| ディレクトリ | 役割 | 復元判断 |
+|----|----|----|
+| `identity/` | デバイス identity・暗号鍵 | 必須（再 pairing 回避） |
+| `telegram/` | Telegram pairing 状態・update offset | 必須 |
+| `agents/`, `memory/`, `media/` | セッション履歴・累積メモリ・受信メディア | 履歴を引き継ぎたい場合（`agents/` を入れるなら `media/` もセット） |
+| `flows/`, `tasks/`, `cron/`, `plugins/`, `skills/` | ユーザー定義 | カスタムしていれば復元 |
+| `workspace/` | ワークスペース実体（snapshot は symlink ではなくファイル） | 必要なら Google Drive へ書き戻し |
+| `exec-approvals.json`, `*.bak*`, `*.last-good`, `logs/` | 履歴・キャッシュ | 復元しない（新 config と競合 / 不要） |
 
-```bash
-openclaw logs --follow
-openclaw status --all
-tail -f ~/.openclaw/logs/watchdog.log    # watchdog による gateway 自動再起動の履歴
-```
-
-### インシデント対応手順
-
-問題が発生した場合の即座の対応:
-
-1. **Gatewayの停止 + watchdog の停止** (`claw` アカウント)
-   ```bash
-   launchctl bootout "gui/$UID/local.openclaw.watchdog"
-   openclaw gateway stop
-   ```
-
-2. **ネットワーク遮断** (管理者アカウント)
-   ```bash
-   tailscale serve --remove
-   ```
-
-3. **Telegram DMを無効化** (`claw` アカウントの設定ファイルで)
-   ```json
-   { "channels": { "telegram": { "dmPolicy": "disabled" } } }
-   ```
-
-4. **認証情報のローテーション** (`claw` アカウント)
-   ```bash
-   openclaw doctor --generate-gateway-token
-   vi ~/.openclaw/.env   # ANTHROPIC_API_KEY を更新
-   openclaw gateway restart
-   ```
-
-5. **監査とログ確認** (`claw` アカウント)
-   ```bash
-   openclaw security audit --deep
-   openclaw logs --follow
-   tail -100 ~/.openclaw/logs/watchdog.log
-   ls ~/.openclaw/agents/*/sessions/
-   ```
-
----
-
-## リモートアクセス (別デバイスからの利用)
-
-### SSHトンネル経由 (Tailscale上)
-
-```bash
-ssh -N -L 18789:127.0.0.1:18789 claw@<mac-mini-tailscale-ip>
-```
-
-### リモートクライアント設定
-
-別デバイスの `~/.openclaw/openclaw.json`:
-```json
-{
-  "gateway": {
-    "mode": "remote",
-    "remote": {
-      "url": "ws://127.0.0.1:18789",
-      "token": "Mac Mini側のgateway authトークン"
-    }
-  }
-}
-```
-
-```bash
-openclaw tui
-```
+`gateway.auth.token` を引き継いでリモートクライアント再設定を避けたい場合は、snapshot の `openclaw.json` から token 値を抜き出して新 `openclaw.json` の同フィールドに書き戻し、`chmod 600` の上で `openclaw gateway restart`。動作確認できたら `rm -rf "$SNAP"`。
 
 ---
 
 ## 参考資料
 
-- [OpenClaw公式ドキュメント - Install](https://docs.openclaw.ai/install)
-- [OpenClaw公式ドキュメント - Security](https://docs.openclaw.ai/gateway/security)
-- [OpenClaw公式ドキュメント - Telegram](https://docs.openclaw.ai/channels/telegram)
-- [OpenClaw公式ドキュメント - Tailscale](https://docs.openclaw.ai/gateway/tailscale)
+- [OpenClaw 公式 - Install](https://docs.openclaw.ai/install) / [Security](https://docs.openclaw.ai/gateway/security) / [Telegram](https://docs.openclaw.ai/channels/telegram) / [Tailscale](https://docs.openclaw.ai/gateway/tailscale)
 - [OpenClaw + Mac Mini + Tailscale ガイド](https://www.mager.co/blog/2026-02-22-openclaw-mac-mini-tailscale/)
 - [OpenClaw GitHub](https://github.com/openclaw/openclaw)
 - [OpenClaw Security Hardening Guide](https://aimaker.substack.com/p/openclaw-security-hardening-guide)

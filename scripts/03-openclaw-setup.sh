@@ -420,7 +420,10 @@ generate_config() {
 
   "agents": {
     "defaults": {
-      "model": "anthropic/claude-opus-4-7",
+      "model": {
+        "primary": "anthropic/claude-opus-4-7",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"]
+      },
       "sandbox": {
         "mode": "off"
       }

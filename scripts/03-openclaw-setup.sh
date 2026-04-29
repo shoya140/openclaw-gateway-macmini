@@ -390,7 +390,7 @@ generate_config() {
         "sticker": false
       },
       "execApprovals": {
-        "enabled": true,
+        "enabled": false,
         "approvers": [${TELEGRAM_USER_ID}],
         "target": "dm"
       }
@@ -399,14 +399,7 @@ generate_config() {
 
   "tools": {
     "profile": "coding",
-    "deny": [
-      "group:automation",
-      "group:runtime",
-      "sessions_spawn",
-      "sessions_send",
-      "gateway",
-      "cron"
-    ],
+    "deny": [],
     "fs": {
       "workspaceOnly": true
     },

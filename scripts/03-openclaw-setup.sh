@@ -43,6 +43,9 @@ prompt_secret() {
 
 OPENCLAW_DIR="$HOME/.openclaw"
 OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMPLATES_DIR="$REPO_ROOT/templates"
 
 # ============================================================
 # Pre-flight checks
@@ -76,7 +79,7 @@ do_reinit() {
     fi
 
     info "Watchdog 停止中..."
-    launchctl bootout "gui/$UID/local.openclaw.watchdog" 2>/dev/null || true
+    launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
 
@@ -127,7 +130,7 @@ do_reinit() {
     info "LaunchAgent 削除中..."
     launchctl remove ai.openclaw.gateway 2>/dev/null || true
     rm -f ~/Library/LaunchAgents/ai.openclaw.gateway.plist 2>/dev/null || true
-    rm -f ~/Library/LaunchAgents/local.openclaw.watchdog.plist 2>/dev/null || true
+    rm -f ~/Library/LaunchAgents/ai.openclaw.watchdog.plist 2>/dev/null || true
 
     info "OpenClaw アンインストール中..."
     npm uninstall -g openclaw 2>/dev/null || true
@@ -504,6 +507,22 @@ exclude_spotlight() {
 }
 
 # ============================================================
+# Shell Completion (zsh)
+# ============================================================
+install_completions() {
+    step "7.6. シェル補完 (zsh) インストール"
+
+    # --install: ~/.zshrc に source 行を追加（既存があれば idempotent）
+    # --write-state: $OPENCLAW_STATE_DIR/completions/openclaw.zsh に補完スクリプトを書き込む
+    if openclaw completion --shell zsh --install --write-state >/dev/null 2>&1; then
+        success "zsh 補完を ~/.openclaw/completions/openclaw.zsh に生成"
+        info "新しいシェルから有効になります（既存セッションは 'exec zsh' で再読込）"
+    else
+        warn "openclaw completion コマンドが失敗しました（補完なしで続行）"
+    fi
+}
+
+# ============================================================
 # Start Gateway & Verify
 # ============================================================
 start_and_verify() {
@@ -566,57 +585,21 @@ install_watchdog() {
     step "8.2 Watchdog LaunchAgent インストール"
 
     local watchdog_script="$OPENCLAW_DIR/scripts/watchdog.sh"
-    local watchdog_plist="$HOME/Library/LaunchAgents/local.openclaw.watchdog.plist"
+    local watchdog_plist="$HOME/Library/LaunchAgents/ai.openclaw.watchdog.plist"
     local watchdog_log_dir="$OPENCLAW_DIR/logs"
 
     mkdir -p "$(dirname "$watchdog_script")" "$watchdog_log_dir"
 
-    cat > "$watchdog_script" << 'WATCHDOGEOF'
-#!/bin/bash
-set -uo pipefail
-
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || true
-
-LOG="$HOME/.openclaw/logs/watchdog.log"
-TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-
-if openclaw gateway status >/dev/null 2>&1; then
-    exit 0
-fi
-
-echo "$TS [WARN] gateway not responding; kicking LaunchAgent" >> "$LOG"
-launchctl kickstart -k "gui/$UID/ai.openclaw.gateway" >> "$LOG" 2>&1
-WATCHDOGEOF
+    cp "$TEMPLATES_DIR/watchdog.sh" "$watchdog_script"
     chmod 700 "$watchdog_script"
 
-    cat > "$watchdog_plist" << PLISTEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>local.openclaw.watchdog</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>${watchdog_script}</string>
-  </array>
-  <key>StartInterval</key>
-  <integer>60</integer>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${watchdog_log_dir}/watchdog.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>${watchdog_log_dir}/watchdog.err.log</string>
-</dict>
-</plist>
-PLISTEOF
+    sed -e "s|@@WATCHDOG_SCRIPT@@|$watchdog_script|g" \
+        -e "s|@@WATCHDOG_LOG_DIR@@|$watchdog_log_dir|g" \
+        "$TEMPLATES_DIR/ai.openclaw.watchdog.plist" > "$watchdog_plist"
 
-    launchctl bootout "gui/$UID/local.openclaw.watchdog" 2>/dev/null || true
+    launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
     launchctl bootstrap "gui/$UID" "$watchdog_plist"
-    success "Watchdog LaunchAgent 登録完了 (60秒間隔で gateway 状態をチェック)"
+    success "Watchdog LaunchAgent 登録完了 (ai.openclaw.watchdog, 60秒間隔)"
     info "ログ: $watchdog_log_dir/watchdog.log"
 }
 
@@ -677,7 +660,8 @@ main() {
     info "  4. 設定ファイル生成 (openclaw.json)"
     info "  5. 環境変数・APIキー設定"
     info "  6. ファイルパーミッション設定 + Spotlight 除外"
-    info "  7. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・watchdog インストール・検証"
+    info "  7. シェル補完 (zsh) インストール"
+    info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・watchdog インストール・検証"
     echo
 
     install_openclaw
@@ -688,6 +672,7 @@ main() {
     setup_secrets
     setup_permissions
     exclude_spotlight
+    install_completions
     start_and_verify
     verify_telegram
 

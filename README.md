@@ -96,6 +96,7 @@ Screen Sharing 等で claw にログインしてから実行する。
 - `~/.openclaw/openclaw.json` 生成（loopback / token auth / Tailscale Serve / Telegram allowlist / `exec.security: full` / `tools.deny` / `ssrfPolicy` / `model.primary: anthropic/claude-opus-4-7`, `model.fallbacks: [anthropic/claude-sonnet-4-6]` 等。実値は [`scripts/03-openclaw-setup.sh`](scripts/03-openclaw-setup.sh) の `generate_config` を参照）
 - `TELEGRAM_BOT_TOKEN` / `ANTHROPIC_API_KEY` を `~/.openclaw/.env` に保存
 - `~/.openclaw` 700 / 設定ファイル 600 / Spotlight 除外
+- zsh 補完を `~/.openclaw/completions/openclaw.zsh` に生成し、`~/.zshrc` に source 行を追加（`openclaw completion --shell zsh --install --write-state`）
 - Gateway LaunchAgent 登録 + `OPENCLAW_NO_RESPAWN=1` 注入 + Watchdog LaunchAgent (60秒間隔) 登録
 - `openclaw security audit` 実行
 

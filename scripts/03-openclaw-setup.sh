@@ -417,7 +417,7 @@ generate_config() {
         "maxDelayMs": 5000,
         "jitter": 0.1
       },
-      "timeoutSeconds": 30,
+      "timeoutSeconds": 60,
       "actions": {
         "sendMessage": true,
         "deleteMessage": false,
@@ -430,7 +430,8 @@ generate_config() {
         "target": "dm"
       },
       "network": {
-        "autoSelectFamily": false
+        "autoSelectFamily": true,
+        "dnsResultOrder": "ipv4first"
       },
       "streaming": {
         "mode": "partial",

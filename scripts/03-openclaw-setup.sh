@@ -65,6 +65,28 @@ validate_workspace_path() {
 }
 
 # ============================================================
+# Project .env loader
+# プロジェクトルートの .env があれば読み込んで環境変数として export する。
+# 対応キー: TELEGRAM_OFFICIAL_BOT_TOKEN / TELEGRAM_PERSONAL_BOT_TOKEN /
+#         TELEGRAM_USER_ID / ANTHROPIC_API_KEY / OLLAMA_API_KEY / OLLAMA_MODEL
+# 値が既に環境変数として set されている場合は対話入力を省略する。
+# OLLAMA_MODEL 未指定時は qwen3.6:35b-a3b を既定値として使用する。
+# ============================================================
+load_project_env() {
+    local script_dir project_root project_env
+    script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+    project_root="$( dirname "$script_dir" )"
+    project_env="$project_root/.env"
+    if [[ -f "$project_env" ]]; then
+        # shellcheck source=/dev/null
+        set -a
+        source "$project_env"
+        set +a
+        info "プロジェクト .env を読み込みました: $project_env"
+    fi
+}
+
+# ============================================================
 # Pre-flight checks
 # ============================================================
 preflight() {
@@ -83,14 +105,12 @@ preflight() {
 # Backup existing install + reset (既存 ~/.openclaw があれば常時実行)
 # ============================================================
 backup_and_reset() {
-    step "0. 既存インストールをバックアップして初期化"
+    step "既存インストールをバックアップして初期化"
     info "既存の ~/.openclaw + Google Drive 上の workspace 内容を ~/.openclaw-snapshot-<ts>/ に退避します"
     info "  - ~/.openclaw → snapshot にコピー (cp -a)"
     info "  - workspace 中身 → snapshot/workspace に mv（実体ファイル。Google Drive からは消える）"
     info "  - personal PC 側の Google Drive にも空状態が反映されます"
 
-    info "旧 Watchdog があれば停止中（撤去済みだが古い環境のクリーンアップ）..."
-    launchctl bootout "gui/$UID/ai.openclaw.watchdog" 2>/dev/null || true
     info "Gateway 停止中..."
     openclaw gateway stop 2>/dev/null || true
 
@@ -129,7 +149,6 @@ backup_and_reset() {
     info "LaunchAgent 削除中..."
     launchctl remove ai.openclaw.gateway 2>/dev/null || true
     rm -f ~/Library/LaunchAgents/ai.openclaw.gateway.plist 2>/dev/null || true
-    rm -f ~/Library/LaunchAgents/ai.openclaw.watchdog.plist 2>/dev/null || true
 
     info "OpenClaw アンインストール中..."
     npm uninstall -g openclaw 2>/dev/null || true
@@ -220,7 +239,7 @@ do_recover() {
 # Install OpenClaw
 # ============================================================
 install_openclaw() {
-    step "1. OpenClaw インストール"
+    step "OpenClaw インストール"
 
     if command -v openclaw &>/dev/null; then
         info "OpenClaw はインストール済み ($(openclaw --version 2>/dev/null || echo 'version unknown')). 再インストールします"
@@ -234,26 +253,46 @@ install_openclaw() {
 # Telegram Bot Setup
 # ============================================================
 setup_telegram() {
-    step "2. Telegram Bot 設定 (official + personal の 2 アカウント)"
+    step "Telegram Bot 設定 (official + personal の 2 アカウント)"
 
-    info "BotFather で 2 つの Bot を作成してください（official / personal）"
-    info "  1. Telegram で @BotFather を検索してチャットを開く"
-    info "  2. /newbot を送信して 2 回繰り返す（Bot 名は任意。例: official 用 / personal 用）"
-    info "  3. それぞれの Bot Token をコピー"
-    echo
-    info "グループで使う場合は BotFather で /setprivacy → Disable も実行してください"
-    echo
+    local official_token="${TELEGRAM_OFFICIAL_BOT_TOKEN:-}"
+    local personal_token="${TELEGRAM_PERSONAL_BOT_TOKEN:-}"
+    local user_id_env="${TELEGRAM_USER_ID:-}"
+    local need_prompt=false
+    [[ -z "$official_token" || -z "$personal_token" || -z "$user_id_env" ]] && need_prompt=true
 
-    local official_token
-    official_token=$(prompt_secret "Telegram Bot Token [official]")
-    [[ -n "$official_token" ]] || error "official の Bot Token は必須です"
+    if $need_prompt; then
+        info "BotFather で 2 つの Bot を作成してください（official / personal）"
+        info "  1. Telegram で @BotFather を検索してチャットを開く"
+        info "  2. /newbot を送信して 2 回繰り返す（Bot 名は任意。例: official 用 / personal 用）"
+        info "  3. それぞれの Bot Token をコピー"
+        echo
+        info "グループで使う場合は BotFather で /setprivacy → Disable も実行してください"
+        echo
+    fi
 
-    local personal_token
-    personal_token=$(prompt_secret "Telegram Bot Token [personal]")
-    [[ -n "$personal_token" ]] || error "personal の Bot Token は必須です"
+    if [[ -n "$official_token" ]]; then
+        info "TELEGRAM_OFFICIAL_BOT_TOKEN を環境変数から取得"
+    else
+        official_token=$(prompt_secret "Telegram Bot Token [official]")
+        [[ -n "$official_token" ]] || error "official の Bot Token は必須です"
+    fi
 
-    TELEGRAM_USER_ID=$(prompt_value "あなたの Telegram User ID (数値)")
-    [[ "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] || error "User ID は数値で入力してください"
+    if [[ -n "$personal_token" ]]; then
+        info "TELEGRAM_PERSONAL_BOT_TOKEN を環境変数から取得"
+    else
+        personal_token=$(prompt_secret "Telegram Bot Token [personal]")
+        [[ -n "$personal_token" ]] || error "personal の Bot Token は必須です"
+    fi
+
+    if [[ -n "$user_id_env" ]]; then
+        info "TELEGRAM_USER_ID を環境変数から取得 ($user_id_env)"
+        TELEGRAM_USER_ID="$user_id_env"
+        [[ "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] || error "TELEGRAM_USER_ID は数値で指定してください (.env): $TELEGRAM_USER_ID"
+    else
+        TELEGRAM_USER_ID=$(prompt_value "あなたの Telegram User ID (数値)")
+        [[ "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] || error "User ID は数値で入力してください"
+    fi
 
     local cred_dir="$OPENCLAW_DIR/credentials/telegram"
     mkdir -p "$cred_dir"
@@ -273,7 +312,7 @@ setup_telegram() {
 # Detect Workspace & Create Symlink
 # ============================================================
 detect_workspace() {
-    step "3. ワークスペースパス検出 + シンボリックリンク作成"
+    step "ワークスペースパス検出 + シンボリックリンク作成"
 
     local gdrive_path=""
     local candidates=""
@@ -337,7 +376,7 @@ detect_workspace() {
 # Generate AGENTS.md (System Prompt)
 # ============================================================
 generate_agents_md() {
-    step "3.5. ワークスペースに AGENTS.md 生成"
+    step "ワークスペースに AGENTS.md 生成"
 
     local agents_md="$WORKSPACE_PATH/AGENTS.md"
 
@@ -402,7 +441,7 @@ AGENTSEOF
 # Generate Config
 # ============================================================
 generate_config() {
-    step "4. 設定ファイル生成"
+    step "設定ファイル生成"
 
     mkdir -p "$OPENCLAW_DIR"
 
@@ -448,20 +487,20 @@ generate_config() {
       "defaultAccount": "official",
       "accounts": {
         "official": {
-          "tokenFile": "${HOME}/.openclaw/credentials/telegram/official.token"
+          "tokenFile": "${HOME}/.openclaw/credentials/telegram/official.token",
+          "dmPolicy": "allowlist",
+          "allowFrom": [${TELEGRAM_USER_ID}],
+          "groupPolicy": "allowlist",
+          "groupAllowFrom": [${TELEGRAM_USER_ID}]
         },
         "personal": {
-          "tokenFile": "${HOME}/.openclaw/credentials/telegram/personal.token"
+          "tokenFile": "${HOME}/.openclaw/credentials/telegram/personal.token",
+          "dmPolicy": "allowlist",
+          "allowFrom": [${TELEGRAM_USER_ID}],
+          "groupPolicy": "allowlist",
+          "groupAllowFrom": [${TELEGRAM_USER_ID}]
         }
       },
-      "dmPolicy": "allowlist",
-      "allowFrom": [
-        ${TELEGRAM_USER_ID}
-      ],
-      "groupPolicy": "allowlist",
-      "groupAllowFrom": [
-        ${TELEGRAM_USER_ID}
-      ],
       "errorPolicy": "always",
       "errorCooldownMs": 120000,
       "textChunkLimit": 3500,
@@ -516,6 +555,10 @@ generate_config() {
 
   "agents": {
     "defaults": {
+      "model": {
+        "primary": "anthropic/claude-opus-4-7",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"]
+      },
       "sandbox": {
         "mode": "off"
       }
@@ -530,7 +573,8 @@ generate_config() {
       },
       {
         "id": "personal-agent",
-        "model": "ollama/qwen3.6:35b-a3b"
+        "model": "ollama/${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
+        "workspace": "${HOME}/.openclaw/workspace"
       }
     ]
   },
@@ -548,6 +592,10 @@ generate_config() {
 
   "session": {
     "dmScope": "per-channel-peer"
+  },
+
+  "commands": {
+    "ownerAllowFrom": ["telegram:${TELEGRAM_USER_ID}"]
   },
 
   "logging": {
@@ -569,13 +617,19 @@ CONFIGEOF
 # Setup Secrets (.env)
 # ============================================================
 setup_secrets() {
-    step "5. シークレット設定 (~/.openclaw/.env)"
+    step "シークレット設定 (~/.openclaw/.env)"
 
     local env_file="$OPENCLAW_DIR/.env"
 
-    local anthropic_key
-    anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
-    [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
+    local anthropic_key="${ANTHROPIC_API_KEY:-}"
+    if [[ -n "$anthropic_key" ]]; then
+        info "ANTHROPIC_API_KEY を環境変数から取得"
+    else
+        anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
+        [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
+    fi
+
+    local ollama_key="${OLLAMA_API_KEY:-ollama-local}"
 
     if [[ -f "$env_file" ]]; then
         sed -i '' '/^TELEGRAM_BOT_TOKEN=/d' "$env_file"
@@ -585,7 +639,7 @@ setup_secrets() {
 
     cat >> "$env_file" << ENVEOF
 ANTHROPIC_API_KEY="${anthropic_key}"
-OLLAMA_API_KEY="ollama-local"
+OLLAMA_API_KEY="${ollama_key}"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -599,7 +653,7 @@ ENVEOF
 # File Permissions
 # ============================================================
 setup_permissions() {
-    step "7. ファイルパーミッション設定"
+    step "ファイルパーミッション設定"
     chmod 700 "$OPENCLAW_DIR"
     chmod 600 "$OPENCLAW_CONFIG"
     find "$OPENCLAW_DIR/credentials" -type f -exec chmod 600 {} \; 2>/dev/null || true
@@ -610,7 +664,7 @@ setup_permissions() {
 # Spotlight 除外
 # ============================================================
 exclude_spotlight() {
-    step "7.5. Spotlight インデックス除外"
+    step "Spotlight インデックス除外"
     touch "$OPENCLAW_DIR/.metadata_never_index"
     success "$OPENCLAW_DIR を Spotlight インデックスから除外"
     if [[ -d "${WORKSPACE_PATH:-}" ]]; then
@@ -624,7 +678,7 @@ exclude_spotlight() {
 # Shell Completion (zsh)
 # ============================================================
 install_completions() {
-    step "7.6. シェル補完 (zsh) インストール"
+    step "シェル補完 (zsh) インストール"
 
     # --install: ~/.zshrc に source 行を追加（既存があれば idempotent）
     # --write-state: $OPENCLAW_STATE_DIR/completions/openclaw.zsh に補完スクリプトを書き込む
@@ -640,7 +694,7 @@ install_completions() {
 # Start Gateway & Verify
 # ============================================================
 start_and_verify() {
-    step "8. Gateway デーモン登録・起動・検証"
+    step "Gateway デーモン登録・起動・検証"
 
     info "LaunchAgent 登録中..."
     openclaw gateway install --force
@@ -659,12 +713,12 @@ start_and_verify() {
         warn "ログを確認してください: openclaw logs --follow"
     fi
 
-    step "9. セキュリティ監査"
+    step "セキュリティ監査"
     openclaw security audit || true
     echo
     openclaw security audit --deep || true
 
-    step "10. インストール確認"
+    step "インストール確認"
     openclaw doctor || true
     openclaw status || true
 }
@@ -673,7 +727,7 @@ start_and_verify() {
 # LaunchAgent plist に環境変数を注入
 # ============================================================
 inject_launchagent_env() {
-    step "8.1 LaunchAgent plist に OPENCLAW_NO_RESPAWN=1 を注入"
+    step "LaunchAgent plist に OPENCLAW_NO_RESPAWN=1 を注入"
 
     local plist="$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
     if [[ ! -f "$plist" ]]; then
@@ -694,11 +748,10 @@ inject_launchagent_env() {
 # Telegram Verification
 # ============================================================
 verify_telegram() {
-    step "11. Telegram 動作確認"
+    step "Telegram 動作確認"
     info "official Bot に DM し、Claude (anthropic/claude-opus-4-7) で応答が返ることを確認してください"
-    info "personal Bot に DM し、Qwen (ollama/qwen3.6:35b-a3b) で応答が返ることを確認してください"
+    info "personal Bot に DM し、Qwen (ollama/${OLLAMA_MODEL:-qwen3.6:35b-a3b}) で応答が返ることを確認してください"
     info "allowlist に含まれない別ユーザーからのメッセージが両 Bot でブロックされることも確認してください"
-    wait_user
     success "Telegram 動作確認完了"
 }
 
@@ -716,11 +769,22 @@ usage() {
     echo "Options:"
     echo "  --recover [DIR]  セットアップ完了後、snapshot から workspace と ~/.openclaw/cron を復元します。"
     echo "                   DIR を指定しない場合は最新の ~/.openclaw-snapshot-* を自動選択。"
-    echo "                   DIR を指定する場合は snapshot ディレクトリのパスを渡します"
+    echo "                   DIR を指定する場合は snapshot ディレクトリのパスを空白区切りで渡します"
     echo "                   (例: --recover ~/.openclaw-snapshot-20260502-100534)。"
-    echo "                   --recover=DIR の形式も可。"
+    echo "                   --recover=DIR の形式も可（先頭 ~ は内部で \$HOME に展開）。"
     echo "                   それ以外（identity, telegram, agents 等）の復元は手動で行ってください。"
     echo "  --help           このヘルプを表示"
+    echo ""
+    echo "環境変数 / .env:"
+    echo "  プロジェクトルート (このスクリプトのある repo) に .env があれば読み込み、"
+    echo "  下記キーがセットされている項目は対話入力を省略します。"
+    echo "    TELEGRAM_OFFICIAL_BOT_TOKEN  official Bot の Token"
+    echo "    TELEGRAM_PERSONAL_BOT_TOKEN  personal Bot の Token"
+    echo "    TELEGRAM_USER_ID             Telegram User ID (数値)"
+    echo "    ANTHROPIC_API_KEY            Anthropic API Key"
+    echo "    OLLAMA_API_KEY               未指定時は \"ollama-local\""
+    echo "    OLLAMA_MODEL                 personal-agent / preload で使うモデル (未指定時は qwen3.6:35b-a3b)"
+    echo "  シェルから export した環境変数も同様に優先されます。"
 }
 
 # ============================================================
@@ -750,10 +814,17 @@ main() {
         esac
     done
 
+    # zsh/bash は --recover=~/path の形式では ~ をシェル展開しない。
+    # 引数として受け取った先頭の ~ を $HOME に正規化する。
+    if [[ "$recover_snapshot" == "~" || "$recover_snapshot" == "~/"* ]]; then
+        recover_snapshot="${HOME}${recover_snapshot#\~}"
+    fi
+
     echo -e "${BOLD}OpenClaw Gateway - OpenClaw Setup${NC}"
     echo -e "${BOLD}==================================${NC}"
     echo
     preflight
+    load_project_env
 
     if [[ -d "$OPENCLAW_DIR" ]]; then
         backup_and_reset
@@ -763,19 +834,19 @@ main() {
 
     echo
     info "このスクリプトは以下を実行します:"
-    info "  1. OpenClaw インストール"
-    info "  2. Telegram Bot 設定"
-    info "  3. ワークスペースパス検出 + AGENTS.md 生成"
-    info "  4. 設定ファイル生成 (openclaw.json)"
-    info "  5. 環境変数・APIキー設定"
-    info "  6. ファイルパーミッション設定 + Spotlight 除外"
-    info "  7. シェル補完 (zsh) インストール"
-    info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・検証"
+    info "  - OpenClaw インストール"
+    info "  - Telegram Bot 設定"
+    info "  - ワークスペースパス検出 + AGENTS.md 生成"
+    info "  - 設定ファイル生成 (openclaw.json)"
+    info "  - 環境変数・APIキー設定"
+    info "  - ファイルパーミッション設定 + Spotlight 除外"
+    info "  - シェル補完 (zsh) インストール"
+    info "  - Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・検証"
     if $recover; then
         if [[ -n "$recover_snapshot" ]]; then
-            info "  9. 指定 snapshot から workspace + cron を復元 (--recover $recover_snapshot)"
+            info "  - 指定 snapshot から workspace + cron を復元 (--recover $recover_snapshot)"
         else
-            info "  9. 最新 snapshot から workspace + cron を復元 (--recover)"
+            info "  - 最新 snapshot から workspace + cron を復元 (--recover)"
         fi
     fi
     echo

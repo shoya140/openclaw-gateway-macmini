@@ -187,6 +187,75 @@ setup_google_drive() {
 }
 
 # ============================================================
+# Phase 4: Ollama (claw として常駐するシステム LaunchDaemon)
+# ============================================================
+setup_ollama_install() {
+    step "4.1 Ollama インストール"
+    if command -v ollama &>/dev/null; then
+        info "Ollama はインストール済み ($(ollama --version 2>&1 | head -1))"
+    else
+        brew install ollama
+        success "Ollama インストール完了"
+    fi
+}
+
+setup_ollama_daemon() {
+    step "4.2 Ollama LaunchDaemon (UserName=claw, Flash Attention + q8 KV cache)"
+    id claw &>/dev/null || error "'claw' ユーザーが存在しません。Phase 3 を先に実行してください"
+
+    local plist=/Library/LaunchDaemons/io.shoya.ollama.plist
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.shoya.ollama</string>
+    <key>UserName</key>
+    <string>claw</string>
+    <key>GroupName</key>
+    <string>staff</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/ollama</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/ollama.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ollama.error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/claw</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>OLLAMA_FLASH_ATTENTION</key>
+        <string>1</string>
+        <key>OLLAMA_KV_CACHE_TYPE</key>
+        <string>q8_0</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+    sudo install -m 0644 -o root -g wheel "$tmp" "$plist"
+    rm -f "$tmp"
+
+    # 旧 daemon (root 起動 / 別ラベル) があれば停止
+    sudo launchctl bootout system/io.shoya.ollama 2>/dev/null || true
+    sudo launchctl bootout system/com.ollama.daemon 2>/dev/null || true
+    sudo launchctl bootstrap system "$plist"
+    sudo launchctl enable system/io.shoya.ollama 2>/dev/null || true
+    success "Ollama LaunchDaemon 配置 + 起動 (claw として serve、モデル置き場は /Users/claw/.ollama)"
+}
+
+# ============================================================
 # Phase 7: Tailscale Serve
 # ============================================================
 setup_tailscale_serve() {
@@ -217,7 +286,8 @@ main() {
     info "  2. Tailscaleのインストール・設定"
     info "  3. 'claw' 標準アカウント作成"
     info "  4. Google Drive for Desktop インストール"
-    info "  5. Tailscale Serve 設定"
+    info "  5. Ollama インストール + LaunchDaemon (UserName=claw)"
+    info "  6. Tailscale Serve 設定"
     echo
     confirm "実行しますか?" || { info "中止しました"; exit 0; }
 
@@ -235,6 +305,9 @@ main() {
 
     setup_claw_account
     setup_google_drive
+
+    setup_ollama_install
+    setup_ollama_daemon
 
     setup_tailscale_serve
 

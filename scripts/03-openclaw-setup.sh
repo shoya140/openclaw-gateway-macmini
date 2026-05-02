@@ -202,25 +202,39 @@ install_openclaw() {
 # Telegram Bot Setup
 # ============================================================
 setup_telegram() {
-    step "2. Telegram Bot 設定"
+    step "2. Telegram Bot 設定 (official + personal の 2 アカウント)"
 
-    info "Telegram Bot の情報が必要です"
-    info "  BotFather で Bot を作成していない場合は、先に作成してください:"
+    info "BotFather で 2 つの Bot を作成してください（official / personal）"
     info "  1. Telegram で @BotFather を検索してチャットを開く"
-    info "  2. /newbot を送信"
-    info "  3. Bot名とユーザー名を入力"
-    info "  4. 表示される Bot Token をコピー"
+    info "  2. /newbot を送信して 2 回繰り返す（Bot 名は任意。例: official 用 / personal 用）"
+    info "  3. それぞれの Bot Token をコピー"
     echo
     info "グループで使う場合は BotFather で /setprivacy → Disable も実行してください"
     echo
 
-    TELEGRAM_BOT_TOKEN=$(prompt_secret "Telegram Bot Token")
-    [[ -n "$TELEGRAM_BOT_TOKEN" ]] || error "Bot Token は必須です"
+    local official_token
+    official_token=$(prompt_secret "Telegram Bot Token [official]")
+    [[ -n "$official_token" ]] || error "official の Bot Token は必須です"
+
+    local personal_token
+    personal_token=$(prompt_secret "Telegram Bot Token [personal]")
+    [[ -n "$personal_token" ]] || error "personal の Bot Token は必須です"
 
     TELEGRAM_USER_ID=$(prompt_value "あなたの Telegram User ID (数値)")
     [[ "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] || error "User ID は数値で入力してください"
 
-    success "Telegram 情報取得完了"
+    local cred_dir="$OPENCLAW_DIR/credentials/telegram"
+    mkdir -p "$cred_dir"
+    chmod 700 "$OPENCLAW_DIR" 2>/dev/null || true
+    chmod 700 "$OPENCLAW_DIR/credentials" 2>/dev/null || true
+    chmod 700 "$cred_dir"
+
+    printf '%s' "$official_token" > "$cred_dir/official.token"
+    chmod 600 "$cred_dir/official.token"
+    printf '%s' "$personal_token" > "$cred_dir/personal.token"
+    chmod 600 "$cred_dir/personal.token"
+
+    success "Token ファイル生成: $cred_dir/{official,personal}.token (chmod 600)"
 }
 
 # ============================================================
@@ -399,6 +413,15 @@ generate_config() {
 
   "channels": {
     "telegram": {
+      "defaultAccount": "official",
+      "accounts": {
+        "official": {
+          "tokenFile": "${HOME}/.openclaw/credentials/telegram/official.token"
+        },
+        "personal": {
+          "tokenFile": "${HOME}/.openclaw/credentials/telegram/personal.token"
+        }
+      },
       "dmPolicy": "allowlist",
       "allowFrom": [
         ${TELEGRAM_USER_ID}
@@ -461,15 +484,35 @@ generate_config() {
 
   "agents": {
     "defaults": {
-      "model": {
-        "primary": "anthropic/claude-opus-4-7",
-        "fallbacks": ["anthropic/claude-sonnet-4-6"]
-      },
       "sandbox": {
         "mode": "off"
       }
-    }
+    },
+    "list": [
+      {
+        "id": "official-agent",
+        "model": {
+          "primary": "anthropic/claude-opus-4-7",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        }
+      },
+      {
+        "id": "personal-agent",
+        "model": "ollama/qwen3.6:35b-a3b"
+      }
+    ]
   },
+
+  "bindings": [
+    {
+      "agentId": "official-agent",
+      "match": { "channel": "telegram", "accountId": "official" }
+    },
+    {
+      "agentId": "personal-agent",
+      "match": { "channel": "telegram", "accountId": "personal" }
+    }
+  ],
 
   "session": {
     "dmScope": "per-channel-peer"
@@ -509,13 +552,12 @@ setup_secrets() {
     fi
 
     cat >> "$env_file" << ENVEOF
-TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
 ANTHROPIC_API_KEY="${anthropic_key}"
 OLLAMA_API_KEY="ollama-local"
 ENVEOF
     chmod 600 "$env_file"
 
-    success "TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, OLLAMA_API_KEY を $env_file に設定"
+    success "ANTHROPIC_API_KEY, OLLAMA_API_KEY を $env_file に設定 (Telegram token は credentials/telegram/*.token)"
 
     info "確認中..."
     openclaw models status || true
@@ -621,8 +663,9 @@ inject_launchagent_env() {
 # ============================================================
 verify_telegram() {
     step "11. Telegram 動作確認"
-    info "Telegram で作成した Bot にDMを送信して、応答が返ることを確認してください"
-    info "allowlist に含まれない別ユーザーからのメッセージがブロックされることも確認してください"
+    info "official Bot に DM し、Claude (anthropic/claude-opus-4-7) で応答が返ることを確認してください"
+    info "personal Bot に DM し、Qwen (ollama/qwen3.6:35b-a3b) で応答が返ることを確認してください"
+    info "allowlist に含まれない別ユーザーからのメッセージが両 Bot でブロックされることも確認してください"
     wait_user
     success "Telegram 動作確認完了"
 }

@@ -43,6 +43,26 @@ prompt_secret() {
 
 OPENCLAW_DIR="$HOME/.openclaw"
 OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
+WORKSPACE_BASENAME="openclaw-workspace"
+
+# ============================================================
+# Workspace path validation
+# パスは必ず .../openclaw-workspace で終わること、かつ実ディレクトリ
+# (symlink 経由含む) であることを保証する。
+# 過去に detect_workspace のフォールバック入力で My Drive ルートが
+# 受け入れられ、--recover 時に Google Drive のトップディレクトリへ
+# workspace の中身が散布される事故を防ぐためのガード。
+# ============================================================
+validate_workspace_path() {
+    local path="$1" context="${2:-workspace}"
+    [[ -n "$path" ]] || error "${context}: パスが空です"
+    local base
+    base=$(basename "$path")
+    [[ "$base" == "$WORKSPACE_BASENAME" ]] \
+        || error "${context}: パスは '${WORKSPACE_BASENAME}' で終わる必要があります (実際: $path)"
+    [[ -d "$path" ]] \
+        || error "${context}: ディレクトリが存在しません: $path"
+}
 
 # ============================================================
 # Pre-flight checks
@@ -86,6 +106,7 @@ backup_and_reset() {
     success "~/.openclaw → $snapshot_dir にコピー"
 
     if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
+        validate_workspace_path "$workspace_real" "backup_and_reset"
         rm -f "$snapshot_dir/workspace" 2>/dev/null || true
         mkdir -p "$snapshot_dir/workspace"
 
@@ -133,20 +154,30 @@ find_latest_snapshot() {
 }
 
 # ============================================================
-# Recover: 最新 snapshot から workspace + cron を復元
+# Recover: snapshot から workspace + cron を復元
+# 引数なし: 最新 snapshot ($HOME/.openclaw-snapshot-*) を自動選択
+# 引数あり: 指定された snapshot ディレクトリを使用
 # ============================================================
 do_recover() {
-    step "Recover: 最新 snapshot から workspace + cron を復元"
-
+    local snapshot_arg="${1:-}"
     local snapshot_dir
-    snapshot_dir=$(find_latest_snapshot)
 
-    if [[ -z "$snapshot_dir" || ! -d "$snapshot_dir" ]]; then
-        warn "snapshot が見つかりません ($HOME/.openclaw-snapshot-*)。--recover をスキップします"
-        return
+    if [[ -n "$snapshot_arg" ]]; then
+        step "Recover: 指定 snapshot から workspace + cron を復元"
+        snapshot_dir="$snapshot_arg"
+        if [[ ! -d "$snapshot_dir" ]]; then
+            error "指定された snapshot ディレクトリが存在しません: $snapshot_dir"
+        fi
+        info "Snapshot (指定): $snapshot_dir"
+    else
+        step "Recover: 最新 snapshot から workspace + cron を復元"
+        snapshot_dir=$(find_latest_snapshot)
+        if [[ -z "$snapshot_dir" || ! -d "$snapshot_dir" ]]; then
+            warn "snapshot が見つかりません ($HOME/.openclaw-snapshot-*)。--recover をスキップします"
+            return
+        fi
+        info "Snapshot (最新): $snapshot_dir"
     fi
-
-    info "Snapshot: $snapshot_dir"
 
     if [[ -d "$snapshot_dir/workspace" ]]; then
         local workspace_real=""
@@ -157,6 +188,7 @@ do_recover() {
         fi
 
         if [[ -n "$workspace_real" && -d "$workspace_real" ]]; then
+            validate_workspace_path "$workspace_real" "do_recover"
             shopt -s dotglob nullglob
             local items=("$snapshot_dir/workspace"/*)
             shopt -u dotglob nullglob
@@ -274,7 +306,7 @@ detect_workspace() {
         gdrive_path=$(prompt_value "ワークスペースのフルパス (例: /Users/claw/Library/CloudStorage/GoogleDrive-.../My Drive/openclaw-workspace)")
     fi
 
-    [[ -d "$gdrive_path" ]] || warn "指定されたパスが存在しません: $gdrive_path (後でGoogle Drive同期後に作成される場合があります)"
+    validate_workspace_path "$gdrive_path" "detect_workspace"
 
     local symlink_path="$OPENCLAW_DIR/workspace"
     mkdir -p "$OPENCLAW_DIR"
@@ -682,10 +714,13 @@ usage() {
     echo "（初回セットアップ時はバックアップをスキップします）"
     echo ""
     echo "Options:"
-    echo "  --recover  セットアップ完了後、最新の ~/.openclaw-snapshot-* から workspace と"
-    echo "             ~/.openclaw/cron を復元します。それ以外（identity, telegram, agents 等）の"
-    echo "             復元はユーザーが手動で行ってください。"
-    echo "  --help     このヘルプを表示"
+    echo "  --recover [DIR]  セットアップ完了後、snapshot から workspace と ~/.openclaw/cron を復元します。"
+    echo "                   DIR を指定しない場合は最新の ~/.openclaw-snapshot-* を自動選択。"
+    echo "                   DIR を指定する場合は snapshot ディレクトリのパスを渡します"
+    echo "                   (例: --recover ~/.openclaw-snapshot-20260502-100534)。"
+    echo "                   --recover=DIR の形式も可。"
+    echo "                   それ以外（identity, telegram, agents 等）の復元は手動で行ってください。"
+    echo "  --help           このヘルプを表示"
 }
 
 # ============================================================
@@ -693,12 +728,25 @@ usage() {
 # ============================================================
 main() {
     local recover=false
+    local recover_snapshot=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --recover) recover=true; shift ;;
-            --help)    usage; exit 0 ;;
-            *)         error "Unknown option: $1\nRun '$0 --help' for usage." ;;
+            --recover)
+                recover=true
+                shift
+                if [[ $# -gt 0 && "$1" != -* ]]; then
+                    recover_snapshot="$1"
+                    shift
+                fi
+                ;;
+            --recover=*)
+                recover=true
+                recover_snapshot="${1#--recover=}"
+                shift
+                ;;
+            --help) usage; exit 0 ;;
+            *)      error "Unknown option: $1\nRun '$0 --help' for usage." ;;
         esac
     done
 
@@ -724,7 +772,11 @@ main() {
     info "  7. シェル補完 (zsh) インストール"
     info "  8. Gateway デーモン登録・OPENCLAW_NO_RESPAWN 注入・検証"
     if $recover; then
-        info "  9. snapshot から workspace + cron を復元 (--recover)"
+        if [[ -n "$recover_snapshot" ]]; then
+            info "  9. 指定 snapshot から workspace + cron を復元 (--recover $recover_snapshot)"
+        else
+            info "  9. 最新 snapshot から workspace + cron を復元 (--recover)"
+        fi
     fi
     echo
 
@@ -741,7 +793,7 @@ main() {
     verify_telegram
 
     if $recover; then
-        do_recover
+        do_recover "$recover_snapshot"
     fi
 
     echo
@@ -755,7 +807,8 @@ main() {
     info "  5. Telegram からメッセージを送信して動作確認"
     info ""
     info "snapshot から workspace + cron を復元する場合（次回セットアップ時に指定）:"
-    info "  $0 --recover"
+    info "  $0 --recover                                 # 最新 snapshot を自動選択"
+    info "  $0 --recover ~/.openclaw-snapshot-<ts>       # 特定 snapshot を指定"
 }
 
 main "$@"

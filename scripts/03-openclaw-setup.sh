@@ -444,6 +444,7 @@ generate_config() {
     "mode": "local",
     "port": 18789,
     "bind": "loopback",
+    "trustedProxies": ["127.0.0.1", "::1"],
     "auth": {
       "mode": "token",
       "token": "${gateway_token}"
@@ -542,6 +543,13 @@ generate_config() {
     },
     "list": [
       {
+        "id": "main",
+        "model": {
+          "primary": "anthropic/claude-opus-4-7",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        }
+      },
+      {
         "id": "official-agent",
         "model": {
           "primary": "anthropic/claude-opus-4-7",
@@ -551,7 +559,11 @@ generate_config() {
       {
         "id": "personal-agent",
         "model": "lmstudio/${lmstudio_model}",
-        "workspace": "${HOME}/.openclaw/workspace"
+        "workspace": "${HOME}/.openclaw/workspace",
+        "sandbox": { "mode": "all" },
+        "tools": {
+          "deny": ["group:web", "browser"]
+        }
       }
     ]
   },
@@ -560,7 +572,7 @@ generate_config() {
     "providers": {
       "lmstudio": {
         "baseUrl": "http://127.0.0.1:1234/v1",
-        "api": "openai",
+        "api": "openai-completions",
         "models": [
           {
             "id": "${lmstudio_model}",
@@ -737,6 +749,28 @@ inject_launchagent_env() {
 }
 
 # ============================================================
+# Cleanup config backups
+# Doctor は config 書き換えのたびに ~/.openclaw/openclaw.json.{bak,bak.N,last-good}
+# を生成する。Setup 直後はこれらの backup は不要 (snapshot に元 config が残っているため)
+# なので一括削除する。
+# ============================================================
+cleanup_config_backups() {
+    step "Doctor が生成した config backup を削除"
+    local removed=0
+    for f in "$OPENCLAW_CONFIG".bak "$OPENCLAW_CONFIG".bak.* "$OPENCLAW_CONFIG".last-good; do
+        if [[ -f "$f" ]]; then
+            rm -f "$f"
+            removed=$((removed + 1))
+        fi
+    done
+    if [[ $removed -gt 0 ]]; then
+        success "${removed} 個の backup file を削除 (snapshot に元 config が残っているため安全)"
+    else
+        info "削除対象の backup file はありませんでした"
+    fi
+}
+
+# ============================================================
 # Usage
 # ============================================================
 usage() {
@@ -832,6 +866,7 @@ main() {
             info "  - 最新 snapshot から workspace + cron を復元 (--recover)"
         fi
     fi
+    info "  - Doctor が生成した openclaw.json.{bak,bak.N,last-good} を削除"
     echo
 
     install_openclaw
@@ -849,6 +884,8 @@ main() {
     if $recover; then
         do_recover "$recover_snapshot"
     fi
+
+    cleanup_config_backups
 
     echo
     step "OpenClaw Setup 完了!"

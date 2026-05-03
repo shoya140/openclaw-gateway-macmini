@@ -436,7 +436,7 @@ generate_config() {
         tailscale_origin=$(prompt_value "Tailscale Serve の URL (例: https://mac-mini.tailnet-name.ts.net)")
     fi
 
-    local lmstudio_model="${LMSTUDIO_MODEL:-unsloth/qwen3.6-35b-a3b-ud-mlx}"
+    local lmstudio_model="${LMSTUDIO_MODEL:-unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit}"
 
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
@@ -765,7 +765,7 @@ usage() {
     echo "    ANTHROPIC_API_KEY            Anthropic API Key"
     echo "    LMSTUDIO_API_KEY             未指定時は \"lm-studio\" (LM Studio はローカルなので marker)"
     echo "    LMSTUDIO_MODEL               personal-agent と 01 の lms get で使うモデル"
-    echo "                                 (未指定時は unsloth/qwen3.6-35b-a3b-ud-mlx)"
+    echo "                                 (未指定時は unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit)"
     echo "  シェルから export した環境変数も同様に優先されます。"
 }
 

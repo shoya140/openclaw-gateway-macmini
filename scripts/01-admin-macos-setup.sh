@@ -232,7 +232,7 @@ PLIST
 # ============================================================
 setup_lmstudio_get() {
     step "3.3 LM Studio モデル取得"
-    local model="${LMSTUDIO_MODEL:-unsloth/qwen3.6-35b-a3b-ud-mlx}"
+    local model="${LMSTUDIO_MODEL:-unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit}"
     local lms_bin="${ADMIN_HOME}/.lmstudio/bin/lms"
 
     [[ -x "$lms_bin" ]] || error "lms CLI が見つかりません: $lms_bin"
@@ -247,9 +247,14 @@ setup_lmstudio_get() {
         || error "LM Studio server (127.0.0.1:1234) に接続できません。/Library/LaunchDaemons/io.shoya.lmstudio.plist の起動状態を確認してください"
     info "LM Studio server 起動確認"
 
-    info "lms get $model (既に取得済みの場合は即終了)..."
+    # `lms get <user>/<repo>` 形式は引数を内部的に小文字化するため、
+    # HuggingFace の case-sensitive なリポジトリ名 (例: Qwen3.6-...-MLX-4bit)
+    # と一致せず resolve に失敗する。URL 形式で渡すとこの正規化を回避できる。
+    local model_url="https://huggingface.co/${model}"
+
+    info "lms get $model_url (既に取得済みの場合は即終了)..."
     # `lms get` には非対話フラグが無いため、確認プロンプトには yes を流して進める
-    yes | "$lms_bin" get "$model" || error "lms get $model に失敗しました"
+    yes | "$lms_bin" get "$model_url" || error "lms get $model_url に失敗しました"
     success "モデル $model 用意完了"
 }
 

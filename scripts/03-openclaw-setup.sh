@@ -1,45 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
-step()    { echo -e "\n${BOLD}>>> $*${NC}"; }
-wait_user() {
-    echo -e "${YELLOW}"
-    read -rp "完了したら Enter を押してください..." _
-    echo -e "${NC}"
-}
-confirm() {
-    read -rp "$(echo -e "${YELLOW}$* [y/N]: ${NC}")" answer
-    [[ "$answer" =~ ^[Yy]$ ]]
-}
-prompt_value() {
-    local prompt="$1" default="${2:-}"
-    if [[ -n "$default" ]]; then
-        read -rp "$(echo -e "${BLUE}${prompt} [${default}]: ${NC}")" value
-        echo "${value:-$default}"
-    else
-        local value
-        read -rp "$(echo -e "${BLUE}${prompt}: ${NC}")" value
-        echo "$value"
-    fi
-}
-prompt_secret() {
-    local prompt="$1"
-    local value
-    read -rsp "$(echo -e "${BLUE}${prompt}: ${NC}")" value
-    echo >&2
-    echo "$value"
-}
+source "$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )/lib.sh"
 
 OPENCLAW_DIR="$HOME/.openclaw"
 OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
@@ -62,28 +24,6 @@ validate_workspace_path() {
         || error "${context}: パスは '${WORKSPACE_BASENAME}' で終わる必要があります (実際: $path)"
     [[ -d "$path" ]] \
         || error "${context}: ディレクトリが存在しません: $path"
-}
-
-# ============================================================
-# Project .env loader
-# プロジェクトルートの .env があれば読み込んで環境変数として export する。
-# 対応キー: TELEGRAM_OFFICIAL_BOT_TOKEN / TELEGRAM_PERSONAL_BOT_TOKEN /
-#         TELEGRAM_USER_ID / ANTHROPIC_API_KEY / OLLAMA_API_KEY / OLLAMA_MODEL
-# 値が既に環境変数として set されている場合は対話入力を省略する。
-# OLLAMA_MODEL 未指定時は qwen3.6:35b-a3b を既定値として使用する。
-# ============================================================
-load_project_env() {
-    local script_dir project_root project_env
-    script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    project_root="$( dirname "$script_dir" )"
-    project_env="$project_root/.env"
-    if [[ -f "$project_env" ]]; then
-        # shellcheck source=/dev/null
-        set -a
-        source "$project_env"
-        set +a
-        info "プロジェクト .env を読み込みました: $project_env"
-    fi
 }
 
 # ============================================================
@@ -267,8 +207,6 @@ install_telegram_peer_deps() {
         return
     fi
 
-    # バージョンは上流の dist/ がインポートする際の互換 major に合わせる。
-    # 不整合で壊れたら issue を確認して上げ直す。
     local deps=(
         "grammy@^1.42.0"
         "@grammyjs/runner@^2.0.3"
@@ -498,6 +436,8 @@ generate_config() {
         tailscale_origin=$(prompt_value "Tailscale Serve の URL (例: https://mac-mini.tailnet-name.ts.net)")
     fi
 
+    local lmstudio_model="${LMSTUDIO_MODEL:-unsloth/qwen3.6-35b-a3b-ud-mlx}"
+
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
   "gateway": {
@@ -610,7 +550,7 @@ generate_config() {
       },
       {
         "id": "personal-agent",
-        "model": "ollama/${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
+        "model": "lmstudio/${lmstudio_model}",
         "workspace": "${HOME}/.openclaw/workspace"
       }
     ]
@@ -618,17 +558,13 @@ generate_config() {
 
   "models": {
     "providers": {
-      "ollama": {
-        "baseUrl": "http://127.0.0.1:11434",
-        "api": "ollama",
+      "lmstudio": {
+        "baseUrl": "http://127.0.0.1:1234/v1",
+        "api": "openai",
         "models": [
           {
-            "id": "${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
-            "name": "${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
-            "params": {
-              "num_ctx": 8192,
-              "keep_alive": -1
-            }
+            "id": "${lmstudio_model}",
+            "name": "${lmstudio_model}"
           }
         ]
       }
@@ -685,21 +621,24 @@ setup_secrets() {
         [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
     fi
 
-    local ollama_key="${OLLAMA_API_KEY:-ollama-local}"
+    # LM Studio はローカルなので任意の marker。OpenAI 互換 API を使うため
+    # provider 側で API key 必須とされた場合に備えて常に値を入れる。
+    local lmstudio_key="${LMSTUDIO_API_KEY:-lm-studio}"
 
     if [[ -f "$env_file" ]]; then
         sed -i '' '/^TELEGRAM_BOT_TOKEN=/d' "$env_file"
         sed -i '' '/^ANTHROPIC_API_KEY=/d' "$env_file"
         sed -i '' '/^OLLAMA_API_KEY=/d' "$env_file"
+        sed -i '' '/^LMSTUDIO_API_KEY=/d' "$env_file"
     fi
 
     cat >> "$env_file" << ENVEOF
 ANTHROPIC_API_KEY="${anthropic_key}"
-OLLAMA_API_KEY="${ollama_key}"
+LMSTUDIO_API_KEY="${lmstudio_key}"
 ENVEOF
     chmod 600 "$env_file"
 
-    success "ANTHROPIC_API_KEY, OLLAMA_API_KEY を $env_file に設定 (Telegram token は credentials/telegram/*.token)"
+    success "ANTHROPIC_API_KEY, LMSTUDIO_API_KEY を $env_file に設定 (Telegram token は credentials/telegram/*.token)"
 
     info "確認中..."
     openclaw models status || true
@@ -736,8 +675,6 @@ exclude_spotlight() {
 install_completions() {
     step "シェル補完 (zsh) インストール"
 
-    # --install: ~/.zshrc に source 行を追加（既存があれば idempotent）
-    # --write-state: $OPENCLAW_STATE_DIR/completions/openclaw.zsh に補完スクリプトを書き込む
     if openclaw completion --shell zsh --install --write-state >/dev/null 2>&1; then
         success "zsh 補完を ~/.openclaw/completions/openclaw.zsh に生成"
         info "新しいシェルから有効になります（既存セッションは 'exec zsh' で再読込）"
@@ -791,24 +728,12 @@ inject_launchagent_env() {
         return
     fi
 
-    # 既存のキーがあれば削除してから追加（idempotent）
     /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:OPENCLAW_NO_RESPAWN" "$plist" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$plist" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENCLAW_NO_RESPAWN string 1" "$plist"
 
     success "OPENCLAW_NO_RESPAWN=1 を $plist に注入"
     info "config 変更時の SIGUSR1 in-process restart による respawn ループを防止"
-}
-
-# ============================================================
-# Telegram Verification
-# ============================================================
-verify_telegram() {
-    step "Telegram 動作確認"
-    info "official Bot に DM し、Claude (anthropic/claude-opus-4-7) で応答が返ることを確認してください"
-    info "personal Bot に DM し、Qwen (ollama/${OLLAMA_MODEL:-qwen3.6:35b-a3b}) で応答が返ることを確認してください"
-    info "allowlist に含まれない別ユーザーからのメッセージが両 Bot でブロックされることも確認してください"
-    success "Telegram 動作確認完了"
 }
 
 # ============================================================
@@ -838,8 +763,9 @@ usage() {
     echo "    TELEGRAM_PERSONAL_BOT_TOKEN  personal Bot の Token"
     echo "    TELEGRAM_USER_ID             Telegram User ID (数値)"
     echo "    ANTHROPIC_API_KEY            Anthropic API Key"
-    echo "    OLLAMA_API_KEY               未指定時は \"ollama-local\""
-    echo "    OLLAMA_MODEL                 personal-agent と 01 の ollama pull で使うモデル (未指定時は qwen3.6:35b-a3b)"
+    echo "    LMSTUDIO_API_KEY             未指定時は \"lm-studio\" (LM Studio はローカルなので marker)"
+    echo "    LMSTUDIO_MODEL               personal-agent と 01 の lms get で使うモデル"
+    echo "                                 (未指定時は unsloth/qwen3.6-35b-a3b-ud-mlx)"
     echo "  シェルから export した環境変数も同様に優先されます。"
 }
 
@@ -919,7 +845,6 @@ main() {
     exclude_spotlight
     install_completions
     start_and_verify
-    verify_telegram
 
     if $recover; then
         do_recover "$recover_snapshot"
@@ -928,12 +853,7 @@ main() {
     echo
     step "OpenClaw Setup 完了!"
     info ""
-    info "再起動後の復旧手順:"
-    info "  1. Tailscaleは自動接続 (LaunchDaemon)"
-    info "  2. Screen Sharing で claw アカウントにログイン"
-    info "  3. OpenClaw は LaunchAgent で自動起動 (KeepAlive によりプロセス死亡時に自動復帰)"
-    info "  4. Google Drive の同期完了を確認"
-    info "  5. Telegram からメッセージを送信して動作確認"
+    info "Telegram から official / personal の各 Bot に DM を送って応答が返れば完了です。"
     info ""
     info "snapshot から workspace + cron を復元する場合（次回セットアップ時に指定）:"
     info "  $0 --recover                                 # 最新 snapshot を自動選択"

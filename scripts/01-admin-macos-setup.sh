@@ -1,49 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+source "$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )/lib.sh"
 
-info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
-step()    { echo -e "\n${BOLD}>>> $*${NC}"; }
-wait_user() {
-    echo -e "${YELLOW}"
-    read -rp "完了したら Enter を押してください..." _
-    echo -e "${NC}"
-}
-confirm() {
-    read -rp "$(echo -e "${YELLOW}$* [y/N]: ${NC}")" answer
-    [[ "$answer" =~ ^[Yy]$ ]]
-}
-
-# 実行ユーザー (admin) — Ollama LaunchDaemon の UserName / HOME に流し込む
+# 実行ユーザー (admin) — LM Studio LaunchDaemon の UserName / HOME に流し込む
 ADMIN_USER=""
 ADMIN_HOME=""
-
-# ============================================================
-# Project .env loader
-# OLLAMA_MODEL を読み込む。未設定時は setup_ollama_pull で既定値を適用。
-# ============================================================
-load_project_env() {
-    local script_dir project_root project_env
-    script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    project_root="$( dirname "$script_dir" )"
-    project_env="$project_root/.env"
-    if [[ -f "$project_env" ]]; then
-        # shellcheck source=/dev/null
-        set -a
-        source "$project_env"
-        set +a
-        info "プロジェクト .env を読み込みました: $project_env"
-    fi
-}
 
 # ============================================================
 # Pre-flight checks
@@ -100,7 +62,7 @@ setup_autologin() {
 
 setup_screen_sharing() {
     step "1.5 Screen Sharing (画面共有)"
-    # macOS 12.1+ではTCC制限によりCLIだけでは完全に有効化できない場合がある
+    # macOS 12.1+ ではTCC制限によりCLIだけでは完全に有効化できない場合がある
     sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
     sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
@@ -165,6 +127,133 @@ setup_tailscale_verify() {
 }
 
 # ============================================================
+# Phase 3: LM Studio (llmster) を ${ADMIN_USER} として常駐させる LaunchDaemon
+# ============================================================
+setup_lmstudio_install() {
+    step "3.1 LM Studio (llmster) インストール"
+    local lms_bin="${ADMIN_HOME}/.lmstudio/bin/lms"
+    if [[ -x "$lms_bin" ]]; then
+        info "LM Studio CLI はインストール済み: $lms_bin"
+    else
+        # LaunchDaemon と OpenClaw 側は絶対パス参照のため PATH 編集は不要
+        curl -fsSL https://lmstudio.ai/install.sh | bash -s -- --no-modify-path
+        [[ -x "$lms_bin" ]] || error "インストール後に lms バイナリが見つかりません: $lms_bin"
+        success "LM Studio (llmster) インストール完了: $lms_bin"
+    fi
+}
+
+setup_lmstudio_daemon() {
+    step "3.2 LM Studio LaunchDaemon (UserName=${ADMIN_USER}, ブート時に lms server start)"
+    [[ -n "$ADMIN_USER" && -n "$ADMIN_HOME" ]] || error "ADMIN_USER/ADMIN_HOME 未設定。preflight が走っていません"
+
+    local log_dir="${ADMIN_HOME}/Library/Logs"
+    local stdout_log="${log_dir}/lmstudio.log"
+    local stderr_log="${log_dir}/lmstudio.error.log"
+    mkdir -p "$log_dir"
+
+    # 旧 Ollama LaunchDaemon の残骸を片付け（Ollama → LM Studio 移行時のみ実行されるが冪等）
+    local old_label
+    for old_label in io.shoya.ollama io.shoya.ollama-preload; do
+        if sudo launchctl print "system/${old_label}" &>/dev/null; then
+            info "旧 system/${old_label} を bootout"
+            sudo launchctl bootout "system/${old_label}" 2>/dev/null || true
+            sleep 1
+        fi
+        sudo rm -f "/Library/LaunchDaemons/${old_label}.plist"
+    done
+    if [[ -e /var/log/ollama.log || -e /var/log/ollama.error.log ]]; then
+        sudo rm -f /var/log/ollama.log /var/log/ollama.error.log
+    fi
+
+    local lms_bin="${ADMIN_HOME}/.lmstudio/bin/lms"
+    local plist=/Library/LaunchDaemons/io.shoya.lmstudio.plist
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.shoya.lmstudio</string>
+    <key>UserName</key>
+    <string>${ADMIN_USER}</string>
+    <key>GroupName</key>
+    <string>staff</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>${lms_bin} daemon up &amp;&amp; ${lms_bin} server start --port 1234</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>${stdout_log}</string>
+    <key>StandardErrorPath</key>
+    <string>${stderr_log}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>${ADMIN_HOME}</string>
+        <key>PATH</key>
+        <string>${ADMIN_HOME}/.lmstudio/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+    sudo install -m 0644 -o root -g wheel "$tmp" "$plist"
+    rm -f "$tmp"
+
+    # 順序が重要: (load 済みなら bootout) → enable → bootstrap。
+    # disabled override が残っていると bootstrap が EIO で失敗するため、
+    # bootstrap の前に enable で disabled 状態をクリアしておく。
+    if sudo launchctl print system/io.shoya.lmstudio &>/dev/null; then
+        info "既存の system/io.shoya.lmstudio を bootout"
+        sudo launchctl bootout system/io.shoya.lmstudio
+        sleep 1
+    fi
+    sudo launchctl enable system/io.shoya.lmstudio
+    sudo launchctl bootstrap system "$plist"
+    success "LM Studio LaunchDaemon 配置 + 起動 (${ADMIN_USER} として lms daemon up + lms server start --port 1234)"
+
+    mkdir -p "${ADMIN_HOME}/.lmstudio"
+    touch "${ADMIN_HOME}/.lmstudio/.metadata_never_index"
+    tmutil addexclusion "${ADMIN_HOME}/.lmstudio" >/dev/null 2>&1 || true
+    success "Spotlight + Time Machine から ${ADMIN_HOME}/.lmstudio を除外"
+}
+
+# ============================================================
+# Phase 3.3: LM Studio モデル取得
+# JIT loading が有効なので preload はしない。初回 Telegram メッセージ時に
+# モデルがロードされ、TTL 切れまでメモリ常駐する。
+# ============================================================
+setup_lmstudio_get() {
+    step "3.3 LM Studio モデル取得"
+    local model="${LMSTUDIO_MODEL:-unsloth/qwen3.6-35b-a3b-ud-mlx}"
+    local lms_bin="${ADMIN_HOME}/.lmstudio/bin/lms"
+
+    [[ -x "$lms_bin" ]] || error "lms CLI が見つかりません: $lms_bin"
+
+    # llmster daemon + server が listening 開始するまで待機
+    local i
+    for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:1234/v1/models > /dev/null 2>&1 && break
+        sleep 2
+    done
+    curl -sf http://127.0.0.1:1234/v1/models > /dev/null 2>&1 \
+        || error "LM Studio server (127.0.0.1:1234) に接続できません。/Library/LaunchDaemons/io.shoya.lmstudio.plist の起動状態を確認してください"
+    info "LM Studio server 起動確認"
+
+    info "lms get $model (既に取得済みの場合は即終了)..."
+    # `lms get` には非対話フラグが無いため、確認プロンプトには yes を流して進める
+    yes | "$lms_bin" get "$model" || error "lms get $model に失敗しました"
+    success "モデル $model 用意完了"
+}
+
+# ============================================================
 # Phase 4: claw アカウント作成 & ツール
 # ============================================================
 setup_claw_account() {
@@ -211,193 +300,6 @@ setup_google_drive() {
 }
 
 # ============================================================
-# Phase 3: Ollama (admin ユーザーとして常駐するシステム LaunchDaemon)
-# ============================================================
-setup_ollama_install() {
-    step "3.1 Ollama インストール"
-    if command -v ollama &>/dev/null; then
-        info "Ollama はインストール済み ($(ollama --version 2>&1 | head -1))"
-    else
-        brew install ollama
-        success "Ollama インストール完了"
-    fi
-}
-
-setup_ollama_daemon() {
-    step "3.2 Ollama LaunchDaemon (UserName=${ADMIN_USER}, 永続常駐)"
-    [[ -n "$ADMIN_USER" && -n "$ADMIN_HOME" ]] || error "ADMIN_USER/ADMIN_HOME 未設定。preflight が走っていません"
-
-    # ログは admin の ~/Library/Logs に置く。/var/log は root しか書けないため、
-    # UserName=admin で走る daemon が StandardOut/ErrorPath を開けず即死するのを避ける。
-    local log_dir="${ADMIN_HOME}/Library/Logs"
-    local stdout_log="${log_dir}/ollama.log"
-    local stderr_log="${log_dir}/ollama.error.log"
-    mkdir -p "$log_dir"
-
-    # 旧構成（root として走っていた頃）の残骸を片付ける。今後は新しいログパスを使う。
-    if [[ -e /var/log/ollama.log || -e /var/log/ollama.error.log ]]; then
-        sudo rm -f /var/log/ollama.log /var/log/ollama.error.log
-        info "旧 /var/log/ollama.{log,error.log} (root 所有) を削除"
-    fi
-
-    local plist=/Library/LaunchDaemons/io.shoya.ollama.plist
-    local tmp
-    tmp=$(mktemp)
-    cat > "$tmp" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>io.shoya.ollama</string>
-    <key>UserName</key>
-    <string>${ADMIN_USER}</string>
-    <key>GroupName</key>
-    <string>staff</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/opt/homebrew/bin/ollama</string>
-        <string>serve</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>${stdout_log}</string>
-    <key>StandardErrorPath</key>
-    <string>${stderr_log}</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HOME</key>
-        <string>${ADMIN_HOME}</string>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <key>OLLAMA_KEEP_ALIVE</key>
-        <string>-1</string>
-        <key>OLLAMA_MAX_LOADED_MODELS</key>
-        <string>3</string>
-    </dict>
-</dict>
-</plist>
-PLIST
-    sudo install -m 0644 -o root -g wheel "$tmp" "$plist"
-    rm -f "$tmp"
-
-    # 順序が重要: (load 済みなら bootout) → enable → bootstrap。
-    # disabled override が残っていると bootstrap が "Input/output error" (EIO, errno 5) で失敗するため、
-    # bootstrap の前に enable で disabled 状態をクリアしておく。
-    # bootout は未 load 時に macOS バージョン依存で "No such process" / "Could not find" を吐くので、
-    # print で存在確認してから bootout する（メッセージのブレに依存しない）。
-    if sudo launchctl print system/io.shoya.ollama &>/dev/null; then
-        info "既存の system/io.shoya.ollama を bootout"
-        sudo launchctl bootout system/io.shoya.ollama
-        # bootout は非同期。次の bootstrap までに完全に unload させるため軽く待つ。
-        sleep 1
-    fi
-    sudo launchctl enable system/io.shoya.ollama
-    sudo launchctl bootstrap system "$plist"
-    success "Ollama LaunchDaemon 配置 + 起動 (${ADMIN_USER} として serve、モデル置き場は ${ADMIN_HOME}/.ollama)"
-
-    # Spotlight + Time Machine から ${ADMIN_HOME}/.ollama を除外（数十GB の blob インデックス防止）
-    # mdutil はボリューム単位なので、ディレクトリ単位の除外には .metadata_never_index を使う
-    mkdir -p "${ADMIN_HOME}/.ollama"
-    touch "${ADMIN_HOME}/.ollama/.metadata_never_index"
-    tmutil addexclusion "${ADMIN_HOME}/.ollama" >/dev/null 2>&1 || true
-    success "Spotlight + Time Machine から ${ADMIN_HOME}/.ollama を除外"
-}
-
-# ============================================================
-# Phase 3.3: Ollama モデル pull
-# daemon は admin として走り、モデル本体は ${ADMIN_HOME}/.ollama に保存される。
-# pull 自体は HTTP API 経由なのでどのユーザーから呼んでも結果は同じだが、
-# 所有関係を揃えて 01 (admin) で実行する。OLLAMA_MODEL（未指定時は qwen3.6:35b-a3b）を pull する。
-# `ollama pull` は冪等で、既に最新ならすぐに完了する。
-# ============================================================
-setup_ollama_pull() {
-    step "3.3 Ollama モデル pull"
-    local model="${OLLAMA_MODEL:-qwen3.6:35b-a3b}"
-    local ollama_bin="/opt/homebrew/bin/ollama"
-
-    [[ -x "$ollama_bin" ]] || error "ollama CLI が見つかりません: $ollama_bin"
-
-    # Daemon 起動待ち（bootstrap 直後で listening まで数秒かかる）
-    local i
-    for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1 && break
-        sleep 2
-    done
-    curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1 \
-        || error "Ollama daemon (127.0.0.1:11434) に接続できません。/Library/LaunchDaemons/io.shoya.ollama.plist の起動状態を確認してください"
-    info "Ollama daemon 起動確認"
-
-    info "ollama pull $model (既に最新の場合は即終了)..."
-    "$ollama_bin" pull "$model" || error "ollama pull $model に失敗しました"
-    success "モデル $model 用意完了"
-}
-
-# ============================================================
-# Phase 3.4: Ollama モデル preload LaunchDaemon
-# 起動時に OLLAMA_MODEL を一度だけ /api/generate (empty prompt) で
-# メモリにロードし、初回 Telegram メッセージのコールドロード待ちを排除する。
-# OLLAMA_KEEP_ALIVE=-1 (io.shoya.ollama 側) によりロード後は永続常駐する。
-# ============================================================
-setup_ollama_preload() {
-    step "3.4 Ollama preload LaunchDaemon (起動時に OLLAMA_MODEL をメモリへロード)"
-    [[ -n "$ADMIN_USER" && -n "$ADMIN_HOME" ]] || error "ADMIN_USER/ADMIN_HOME 未設定。preflight が走っていません"
-
-    local model="${OLLAMA_MODEL:-qwen3.6:35b-a3b}"
-    local log_dir="${ADMIN_HOME}/Library/Logs"
-    local stdout_log="${log_dir}/ollama-preload.log"
-    local stderr_log="${log_dir}/ollama-preload.error.log"
-    mkdir -p "$log_dir"
-
-    local plist=/Library/LaunchDaemons/io.shoya.ollama-preload.plist
-    local tmp
-    tmp=$(mktemp)
-    cat > "$tmp" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>io.shoya.ollama-preload</string>
-    <key>UserName</key>
-    <string>${ADMIN_USER}</string>
-    <key>GroupName</key>
-    <string>staff</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>for i in \$(seq 1 60); do curl -sf http://127.0.0.1:11434/api/tags &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 2; done; curl -sf -X POST http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' -d '{"model":"${model}","prompt":"","keep_alive":-1}' &gt;/dev/null</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-    <key>StandardOutPath</key>
-    <string>${stdout_log}</string>
-    <key>StandardErrorPath</key>
-    <string>${stderr_log}</string>
-</dict>
-</plist>
-PLIST
-    sudo install -m 0644 -o root -g wheel "$tmp" "$plist"
-    rm -f "$tmp"
-
-    # 順序: (load 済みなら bootout) → enable → bootstrap（io.shoya.ollama と同じ EIO 対策）
-    if sudo launchctl print system/io.shoya.ollama-preload &>/dev/null; then
-        info "既存の system/io.shoya.ollama-preload を bootout"
-        sudo launchctl bootout system/io.shoya.ollama-preload
-        sleep 1
-    fi
-    sudo launchctl enable system/io.shoya.ollama-preload
-    sudo launchctl bootstrap system "$plist"
-    success "Ollama preload LaunchDaemon 配置 + 起動 (model=${model})"
-}
-
-# ============================================================
 # Phase 5: Tailscale Serve
 # ============================================================
 setup_tailscale_serve() {
@@ -427,7 +329,7 @@ main() {
     info "このスクリプトは以下を実行します:"
     info "  1. macOSセキュリティ設定 (ファイアウォール, スリープ防止, 自動ログイン, 共有)"
     info "  2. Tailscaleのインストール・設定"
-    info "  3. Ollama インストール + LaunchDaemon (UserName=${ADMIN_USER}) + モデル pull + 起動時 preload"
+    info "  3. LM Studio (llmster) インストール + LaunchDaemon (UserName=${ADMIN_USER}) + モデル取得"
     info "  4. 'claw' 標準アカウント作成 + Google Drive for Desktop インストール"
     info "  5. Tailscale Serve 設定"
     echo
@@ -445,10 +347,9 @@ main() {
     setup_tailscale_auth
     setup_tailscale_verify
 
-    setup_ollama_install
-    setup_ollama_daemon
-    setup_ollama_pull
-    setup_ollama_preload
+    setup_lmstudio_install
+    setup_lmstudio_daemon
+    setup_lmstudio_get
 
     setup_claw_account
     setup_google_drive

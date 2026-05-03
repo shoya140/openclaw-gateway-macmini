@@ -1,27 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
-step()    { echo -e "\n${BOLD}>>> $*${NC}"; }
-wait_user() {
-    echo -e "${YELLOW}"
-    read -rp "完了したら Enter を押してください..." _
-    echo -e "${NC}"
-}
-confirm() {
-    read -rp "$(echo -e "${YELLOW}$* [y/N]: ${NC}")" answer
-    [[ "$answer" =~ ^[Yy]$ ]]
-}
+source "$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )/lib.sh"
 
 # ============================================================
 # Pre-flight checks
@@ -42,23 +22,11 @@ setup_google_drive() {
         error "Google Drive for Desktop がインストールされていません。先に 01-admin-macos-setup.sh を実行してください"
     fi
 
-    info "Google Drive for Desktop のセットアップが必要です（GUI操作）"
-    info ""
-    info "以下の手順を実行してください:"
-    info "  1. Google Drive アプリを起動 (自動で開きます)"
-    info "  2. Open Claw専用Googleアカウントでサインイン"
-    info "  3. 同期モードを「ミラーリング」に設定:"
-    info "     Google Driveメニュー → 設定 → Google Drive → ミラーリング"
-    info "  4. 個人が共有したワークスペースフォルダが表示されることを確認"
-    info "  5. 共有フォルダをMy Driveに追加"
-    info "     (右クリック → 整理 → ショートカットを追加 → マイドライブ)"
-    echo
-
+    info "Google Drive for Desktop の手順は README.md の「Google Drive セットアップ」セクションを参照してください"
+    info "（専用 Google アカウントでサインイン → ミラーリング → openclaw-workspace 共有フォルダを My Drive に追加）"
     open -a "Google Drive" 2>/dev/null || warn "Google Drive を手動で起動してください"
-
     wait_user
 
-    # ワークスペースパスの検出
     local workspace_candidates
     workspace_candidates=$(find ~/Library/CloudStorage/ -maxdepth 3 -type d -name "openclaw-workspace" 2>/dev/null || true)
 
@@ -113,7 +81,6 @@ autoload -Uz compinit \&\& compinit\
         success "~/.zshrc に mise 設定を追加"
     fi
 
-    # 現在のシェルで mise を有効化
     export PATH="$HOME/.local/bin:$PATH"
     eval "$(~/.local/bin/mise activate bash)" 2>/dev/null || true
 }
@@ -125,9 +92,7 @@ setup_nodejs() {
     step "4. Node.js インストール (mise経由)"
 
     if command -v node &>/dev/null; then
-        local node_ver
-        node_ver=$(node --version 2>/dev/null || echo "unknown")
-        info "Node.js はインストール済み: ${node_ver}"
+        info "Node.js はインストール済み: $(node --version 2>/dev/null || echo 'unknown')"
         if ! confirm "再インストールしますか?"; then
             return
         fi
@@ -136,7 +101,6 @@ setup_nodejs() {
     ~/.local/bin/mise use -g node@24
     success "Node.js インストール完了"
 
-    # mise 経由で有効化
     eval "$(~/.local/bin/mise activate bash)" 2>/dev/null || true
 
     info "Node.js: $(node --version 2>/dev/null || echo 'not in path yet')"
@@ -150,7 +114,6 @@ verify_restrictions() {
     step "5. 権限制限の確認 (sudo / brew が claw から不可)"
     local all_ok=true
 
-    # sudo チェック
     info "sudo が使えないことを確認..."
     if sudo -n true 2>/dev/null; then
         warn "sudo が実行可能です。セキュリティリスクの可能性があります。"
@@ -159,7 +122,6 @@ verify_restrictions() {
         success "sudo 実行不可 (期待通り)"
     fi
 
-    # brew チェック
     info "brew が使えないことを確認..."
     if command -v brew &>/dev/null; then
         warn "brew が利用可能です。claw アカウントには不要です。"
@@ -168,7 +130,6 @@ verify_restrictions() {
         success "brew 未インストール (期待通り)"
     fi
 
-    # mise チェック
     info "mise が使えることを確認..."
     if ~/.local/bin/mise --version &>/dev/null; then
         success "mise 利用可能"

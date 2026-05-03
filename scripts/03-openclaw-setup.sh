@@ -609,11 +609,7 @@ generate_config() {
       },
       {
         "id": "personal-agent",
-        "model": "lmstudio/${lmstudio_model}",
-        "sandbox": { "mode": "all" },
-        "tools": {
-          "deny": ["group:web", "browser"]
-        }
+        "model": "lmstudio/${lmstudio_model}"
       }
     ]
   },

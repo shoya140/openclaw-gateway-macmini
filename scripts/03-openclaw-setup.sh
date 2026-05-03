@@ -443,13 +443,13 @@ if not items:
     sys.exit(1)
 print(json.dumps(items, indent=10, ensure_ascii=False))
 ' 2>/dev/null) && [[ -n "$result" ]] && {
-            info "LM Studio v0 API から $(printf '%s' "$result" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') 個の LLM/VLM を取得"
+            info "LM Studio v0 API から $(printf '%s' "$result" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') 個の LLM/VLM を取得" >&2
             printf '%s' "$result"
             return 0
         }
     fi
 
-    warn "LM Studio v0 API 取得失敗。${fallback_model} 1 個のみで models[] を構築 (後で openclaw.json を編集して追記してください)"
+    warn "LM Studio v0 API 取得失敗。${fallback_model} 1 個のみで models[] を構築 (後で openclaw.json を編集して追記してください)" >&2
     cat <<FALLBACK
 [
           {

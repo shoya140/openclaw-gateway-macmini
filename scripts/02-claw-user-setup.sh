@@ -24,24 +24,6 @@ confirm() {
 }
 
 # ============================================================
-# Project .env loader
-# OLLAMA_MODEL を読み込む。未設定時は setup_ollama_preload で既定値を適用。
-# ============================================================
-load_project_env() {
-    local script_dir project_root project_env
-    script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-    project_root="$( dirname "$script_dir" )"
-    project_env="$project_root/.env"
-    if [[ -f "$project_env" ]]; then
-        # shellcheck source=/dev/null
-        set -a
-        source "$project_env"
-        set +a
-        info "プロジェクト .env を読み込みました: $project_env"
-    fi
-}
-
-# ============================================================
 # Pre-flight checks
 # ============================================================
 preflight() {
@@ -162,84 +144,10 @@ setup_nodejs() {
 }
 
 # ============================================================
-# Ollama モデル pull
-# Ollama daemon 自体は 01-admin-macos-setup.sh が claw として常駐させている。
-# OLLAMA_MODEL（未指定時は qwen3.6:35b-a3b）を pull する。
-# `ollama pull` は冪等で、既に最新ならすぐに完了する。
-# ============================================================
-setup_ollama_pull() {
-    step "5. Ollama モデル pull"
-    local model="${OLLAMA_MODEL:-qwen3.6:35b-a3b}"
-    local ollama_bin="/opt/homebrew/bin/ollama"
-
-    [[ -x "$ollama_bin" ]] || error "ollama CLI が見つかりません: $ollama_bin (先に 01-admin-macos-setup.sh を実行してください)"
-
-    # Daemon 起動待ち
-    local i
-    for i in $(seq 1 30); do
-        curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1 && break
-        sleep 2
-    done
-    curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1 \
-        || error "Ollama daemon (127.0.0.1:11434) に接続できません。/Library/LaunchDaemons/io.shoya.ollama.plist の起動状態を確認してください"
-    info "Ollama daemon 起動確認"
-
-    info "ollama pull $model (既に最新の場合は即終了)..."
-    "$ollama_bin" pull "$model" || error "ollama pull $model に失敗しました"
-    success "モデル $model 用意完了"
-}
-
-# ============================================================
-# Ollama preload LaunchAgent
-# 起動時に OLLAMA_MODEL を keep_alive=-1 で温める。
-# ============================================================
-setup_ollama_preload() {
-    step "6. Ollama preload LaunchAgent"
-    local model="${OLLAMA_MODEL:-qwen3.6:35b-a3b}"
-    local agent_dir="$HOME/Library/LaunchAgents"
-    local plist="$agent_dir/io.shoya.ollama-preload.plist"
-    mkdir -p "$agent_dir"
-
-    cat > "$plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>io.shoya.ollama-preload</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>for i in \$(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags &gt; /dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 2; done; curl -sf http://127.0.0.1:11434/api/chat -d '{"model":"${model}","messages":[],"keep_alive":-1}' &gt; /dev/null 2&gt;&amp;1</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/ollama-preload.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/ollama-preload.err.log</string>
-</dict>
-</plist>
-PLIST
-    chmod 644 "$plist"
-
-    # 旧 ai.ollama.preload があれば停止 + 削除
-    if [[ -f "$agent_dir/ai.ollama.preload.plist" ]]; then
-        launchctl bootout "gui/$UID/ai.ollama.preload" 2>/dev/null || true
-        rm -f "$agent_dir/ai.ollama.preload.plist"
-    fi
-
-    launchctl bootout "gui/$UID/io.shoya.ollama-preload" 2>/dev/null || true
-    launchctl bootstrap "gui/$UID" "$plist"
-    success "Preload LaunchAgent 配置 (model=$model)"
-}
-
-# ============================================================
 # Verify Restrictions
 # ============================================================
 verify_restrictions() {
-    step "7. 権限制限の確認"
+    step "5. 権限制限の確認 (sudo / brew が claw から不可)"
     local all_ok=true
 
     # sudo チェック
@@ -284,23 +192,18 @@ main() {
     echo -e "${BOLD}====================================${NC}"
     echo
     preflight
-    load_project_env
     echo
     info "このスクリプトは以下を実行します:"
     info "  1. Google Drive セットアップ (GUI操作あり)"
     info "  2. mise (ランタイムマネージャ) インストール"
     info "  3. Node.js インストール"
-    info "  4. Ollama モデル pull (OLLAMA_MODEL or qwen3.6:35b-a3b)"
-    info "  5. Ollama preload LaunchAgent (起動時にモデルを温める)"
-    info "  6. 権限制限の確認"
+    info "  4. 権限制限の確認"
     echo
     confirm "実行しますか?" || { info "中止しました"; exit 0; }
 
     setup_google_drive
     setup_mise
     setup_nodejs
-    setup_ollama_pull
-    setup_ollama_preload
     verify_restrictions
 
     echo

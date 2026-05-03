@@ -250,6 +250,43 @@ install_openclaw() {
 }
 
 # ============================================================
+# Telegram 拡張 peer deps の手動 install (上流 packaging bug の workaround)
+# OpenClaw の dist/ は grammy / @grammyjs/runner / @grammyjs/transformer-throttler
+# を runtime で require するが package.json に宣言されていないため、
+# `npm install -g openclaw@latest` のたびに消える。
+# 関連 issue: openclaw/openclaw#59867, #60263, #60309, #62425, #63103, #70615
+# 上流が修正したらこの関数は不要になる。
+# ============================================================
+install_telegram_peer_deps() {
+    step "Telegram 拡張 peer deps install (上流 packaging bug の workaround)"
+
+    local openclaw_root
+    openclaw_root="$(npm root -g)/openclaw"
+    if [[ ! -d "$openclaw_root" ]]; then
+        warn "OpenClaw グローバル install ディレクトリが見つかりません: $openclaw_root"
+        return
+    fi
+
+    # バージョンは上流の dist/ がインポートする際の互換 major に合わせる。
+    # 不整合で壊れたら issue を確認して上げ直す。
+    local deps=(
+        "grammy@^1.42.0"
+        "@grammyjs/runner@^2.0.3"
+        "@grammyjs/transformer-throttler@^1.2.1"
+    )
+
+    info "install 先: $openclaw_root"
+    info "対象: ${deps[*]}"
+
+    if (cd "$openclaw_root" && npm install "${deps[@]}" --no-save --omit=dev --legacy-peer-deps); then
+        success "Telegram 拡張 peer deps install 完了"
+    else
+        warn "Telegram 拡張 peer deps の install に失敗しました（手動で実行してください）"
+        warn "  cd $openclaw_root && npm install ${deps[*]} --no-save --omit=dev --legacy-peer-deps"
+    fi
+}
+
+# ============================================================
 # Telegram Bot Setup
 # ============================================================
 setup_telegram() {
@@ -579,6 +616,25 @@ generate_config() {
     ]
   },
 
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "api": "ollama",
+        "models": [
+          {
+            "id": "${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
+            "name": "${OLLAMA_MODEL:-qwen3.6:35b-a3b}",
+            "params": {
+              "num_ctx": 8192,
+              "keep_alive": -1
+            }
+          }
+        ]
+      }
+    }
+  },
+
   "bindings": [
     {
       "agentId": "official-agent",
@@ -783,7 +839,7 @@ usage() {
     echo "    TELEGRAM_USER_ID             Telegram User ID (数値)"
     echo "    ANTHROPIC_API_KEY            Anthropic API Key"
     echo "    OLLAMA_API_KEY               未指定時は \"ollama-local\""
-    echo "    OLLAMA_MODEL                 personal-agent / preload で使うモデル (未指定時は qwen3.6:35b-a3b)"
+    echo "    OLLAMA_MODEL                 personal-agent と 01 の ollama pull で使うモデル (未指定時は qwen3.6:35b-a3b)"
     echo "  シェルから export した環境変数も同様に優先されます。"
 }
 
@@ -835,6 +891,7 @@ main() {
     echo
     info "このスクリプトは以下を実行します:"
     info "  - OpenClaw インストール"
+    info "  - Telegram 拡張 peer deps install (上流 packaging bug 対応)"
     info "  - Telegram Bot 設定"
     info "  - ワークスペースパス検出 + AGENTS.md 生成"
     info "  - 設定ファイル生成 (openclaw.json)"
@@ -852,6 +909,7 @@ main() {
     echo
 
     install_openclaw
+    install_telegram_peer_deps
     setup_telegram
     detect_workspace
     generate_agents_md

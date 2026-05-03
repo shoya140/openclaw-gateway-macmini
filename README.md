@@ -190,6 +190,41 @@ context window は基本的に LM Studio 側の既定に任せる。文脈不足
 
 ---
 
+## LM Link で個人 PC から LM Studio に直接接続（オプション）
+
+[LM Link](https://lmstudio.ai/link) は LM Studio が提供する Tailscale tsnet ベースのメッシュ VPN で、別マシンから Mac Mini の LM Studio API を「ローカルのように」叩けるようにする機能です。本プロジェクトの既定経路（Telegram + Tailscale Serve + OpenClaw Gateway）とは独立して、個人 PC の Claude Code / Codex / OpenCode 等から LM Studio を直接利用したい場合に使います。
+
+### 前提
+
+- LM Studio アカウント（[lmstudio.ai](https://lmstudio.ai/) で作成）
+- LM Link Preview Access の承認（[lmstudio.ai/link](https://lmstudio.ai/link) から申請。Preview 期間中は申請から承認まで数日）
+
+### Mac Mini 側（admin で実行、LaunchDaemon が起動済みの状態で）
+
+```bash
+~/.lmstudio/bin/lms login        # device code flow。表示される URL とコードを別マシンのブラウザで承認
+~/.lmstudio/bin/lms link enable  # mesh に参加
+```
+
+任意で:
+
+```bash
+~/.lmstudio/bin/lms link set-device-name "mac-mini-openclaw"   # 表示名変更
+~/.lmstudio/bin/lms link status                                # 接続状態 + peer 一覧
+```
+
+### 個人 PC 側
+
+LM Studio GUI を起動し、Mac Mini と同じアカウントで login したうえで LM Link を有効化すると、Mac Mini が peer として認識され、Mac Mini にダウンロード済みのモデルがそのまま利用可能になります。Claude Code 等の OpenAI 互換クライアントは個人 PC のローカル `http://localhost:1234/v1` を向けるだけで Mac Mini 上の LM Studio に到達します。
+
+### 無効化
+
+```bash
+~/.lmstudio/bin/lms link disable
+```
+
+---
+
 ## 再起動後のリモート復旧手順
 
 Mac Mini が再起動した場合（停電・macOS アップデート等）、Tailscale と LM Studio LaunchDaemon は自動起動する。別の Tailscale 接続済み Mac から `open vnc://<mac-mini-tailscale-ip>` で **claw アカウント**にログインすれば、Gateway LaunchAgent + Google Drive for Desktop が起動するので、`openclaw status` と Telegram からの疎通を確認する。
@@ -257,6 +292,6 @@ openclaw gateway restart
 ## 参考資料
 
 - [OpenClaw 公式 - Install](https://docs.openclaw.ai/install) / [Security](https://docs.openclaw.ai/gateway/security) / [Telegram](https://docs.openclaw.ai/channels/telegram) / [Tailscale](https://docs.openclaw.ai/gateway/tailscale)
-- [LM Studio - Headless mode](https://lmstudio.ai/docs/app/api/headless) / [lms CLI](https://lmstudio.ai/docs/cli)
+- [LM Studio - Headless mode](https://lmstudio.ai/docs/app/api/headless) / [lms CLI](https://lmstudio.ai/docs/cli) / [LM Link](https://lmstudio.ai/docs/lmlink)
 - [OpenClaw + Mac Mini + Tailscale ガイド](https://www.mager.co/blog/2026-02-22-openclaw-mac-mini-tailscale/)
 - [OpenClaw GitHub](https://github.com/openclaw/openclaw)

@@ -413,6 +413,54 @@ AGENTSEOF
 }
 
 # ============================================================
+# Build LM Studio models[] JSON for openclaw.json
+# LM Studio v0 native API (http://127.0.0.1:1234/api/v0/models) からロード可能な
+# LLM / VLM 一覧を取得し、各モデルに max_context_length を付与した OpenClaw 形式の
+# models[] JSON 配列を生成する。これにより claw 側で `agents.list[].model` を書き
+# 換えるだけでモデル切り替えが完結し、contextWindow も自動追従する。
+# API 失敗時は ${LMSTUDIO_MODEL} 1 個だけのフォールバックを返す。
+# ============================================================
+build_lmstudio_models_json() {
+    local raw fallback_model
+    fallback_model="${LMSTUDIO_MODEL:-unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit}"
+    raw=$(curl -sf --max-time 5 http://127.0.0.1:1234/api/v0/models 2>/dev/null) || raw=""
+
+    if [[ -n "$raw" ]]; then
+        local result
+        result=$(printf '%s' "$raw" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+items = []
+for m in data.get("data", []):
+    if m.get("type") not in ("llm", "vlm", "vision-llm"):
+        continue
+    entry = {"id": m["id"], "name": m["id"]}
+    ctx = m.get("max_context_length")
+    if isinstance(ctx, int) and ctx > 0:
+        entry["contextWindow"] = ctx
+    items.append(entry)
+if not items:
+    sys.exit(1)
+print(json.dumps(items, indent=10, ensure_ascii=False))
+' 2>/dev/null) && [[ -n "$result" ]] && {
+            info "LM Studio v0 API から $(printf '%s' "$result" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') 個の LLM/VLM を取得"
+            printf '%s' "$result"
+            return 0
+        }
+    fi
+
+    warn "LM Studio v0 API 取得失敗。${fallback_model} 1 個のみで models[] を構築 (後で openclaw.json を編集して追記してください)"
+    cat <<FALLBACK
+[
+          {
+            "id": "${fallback_model}",
+            "name": "${fallback_model}"
+          }
+        ]
+FALLBACK
+}
+
+# ============================================================
 # Generate Config
 # ============================================================
 generate_config() {
@@ -437,6 +485,8 @@ generate_config() {
     fi
 
     local lmstudio_model="${LMSTUDIO_MODEL:-unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit}"
+    local lmstudio_models_json
+    lmstudio_models_json=$(build_lmstudio_models_json)
 
     cat > "$OPENCLAW_CONFIG" << CONFIGEOF
 {
@@ -537,6 +587,7 @@ generate_config() {
         "primary": "anthropic/claude-opus-4-7",
         "fallbacks": ["anthropic/claude-sonnet-4-6"]
       },
+      "workspace": "${HOME}/.openclaw/workspace",
       "sandbox": {
         "mode": "off"
       }
@@ -559,7 +610,6 @@ generate_config() {
       {
         "id": "personal-agent",
         "model": "lmstudio/${lmstudio_model}",
-        "workspace": "${HOME}/.openclaw/workspace",
         "sandbox": { "mode": "all" },
         "tools": {
           "deny": ["group:web", "browser"]
@@ -573,12 +623,7 @@ generate_config() {
       "lmstudio": {
         "baseUrl": "http://127.0.0.1:1234/v1",
         "api": "openai-completions",
-        "models": [
-          {
-            "id": "${lmstudio_model}",
-            "name": "${lmstudio_model}"
-          }
-        ]
+        "models": ${lmstudio_models_json}
       }
     }
   },
@@ -798,8 +843,10 @@ usage() {
     echo "    TELEGRAM_USER_ID             Telegram User ID (数値)"
     echo "    ANTHROPIC_API_KEY            Anthropic API Key"
     echo "    LMSTUDIO_API_KEY             未指定時は \"lm-studio\" (LM Studio はローカルなので marker)"
-    echo "    LMSTUDIO_MODEL               personal-agent と 01 の lms get で使うモデル"
+    echo "    LMSTUDIO_MODEL               01 の lms get 対象 + 03 の personal-agent.model 初期値"
     echo "                                 (未指定時は unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit)"
+    echo "                                 ※ 他の LM Studio モデルへの切り替えは openclaw.json の"
+    echo "                                    agents.list[].model を編集すれば追従する"
     echo "  シェルから export した環境変数も同様に優先されます。"
 }
 

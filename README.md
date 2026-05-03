@@ -65,7 +65,7 @@ TELEGRAM_PERSONAL_BOT_TOKEN="..."
 TELEGRAM_USER_ID="..."
 ANTHROPIC_API_KEY="sk-ant-..."
 LMSTUDIO_API_KEY="lm-studio"                    # 省略可。未指定時は "lm-studio" (LM Studio はローカルなので marker)
-LMSTUDIO_MODEL="unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit" # 省略可。01 の lms get + 03 の personal-agent.model に反映
+LMSTUDIO_MODEL="unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit" # 省略可。01 の lms get 対象 + 03 の personal-agent.model 初期値（後の切り替えは openclaw.json で）
 ```
 
 - セットされている項目だけスキップされ、未設定の項目は従来通り対話入力されます
@@ -127,8 +127,8 @@ Screen Sharing 等で claw にログインしてから実行する。
 - 入力された 2 つの Bot Token を `~/.openclaw/credentials/telegram/{official,personal}.token` (chmod 600) に書き込み（OpenClaw の `tokenFile` 仕様。symlink 不可・実ファイルのみ）
 - `~/.openclaw/openclaw.json` 生成（主な設定）:
   - **マルチアカウント Telegram**: `channels.telegram.accounts.{official,personal}` 各々に `tokenFile` + `dmPolicy: "allowlist"` + `allowFrom: [USER_ID]` + `groupPolicy` / `groupAllowFrom` を指定。`defaultAccount: official`。**allowlist は account 単位**（チャンネル直下に書くと Doctor が `accounts.default` に切り出してしまい、official/personal は allowlist 無し扱いになる）
-  - **エージェント**: `agents.list[]` に `main` / `official-agent` (どちらも `anthropic/claude-opus-4-7` primary + `anthropic/claude-sonnet-4-6` fallback) と `personal-agent` (`lmstudio/${LMSTUDIO_MODEL}`、未指定時は `lmstudio/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`)。`main` を明示するのは `~/.openclaw/agents/main` セッションディレクトリが doctor 実行時に自動生成されるためで、entry がないと `state integrity` 警告になる。`personal-agent` には `workspace: ~/.openclaw/workspace` を明示し、official と同じ Google Drive 配下の workspace を共有させる（明示しない場合 openclaw は `~/.openclaw/workspace-personal-agent` を自動生成して別 workspace になる）。**さらに `personal-agent` だけは `sandbox.mode: "all"` + `tools.deny: ["group:web", "browser"]` を per-agent で適用**（35B 規模のローカル LLM は prompt injection 耐性が低いため、`security audit` の CRITICAL 警告に従って web 系 tool を無効化）。`agents.defaults.model` にも同じ Claude Opus + Sonnet fallback を設定し、未バインド agent が OpenClaw 組み込み既定 (`openai/gpt-5.5`) にフォールバックするのを防止
-  - **LM Studio provider**: `models.providers.lmstudio` に OpenAI 互換 API として登録（`baseUrl: http://127.0.0.1:1234/v1`, `api: openai-completions`）
+  - **エージェント**: `agents.list[]` に `main` / `official-agent` (どちらも `anthropic/claude-opus-4-7` primary + `anthropic/claude-sonnet-4-6` fallback) と `personal-agent` (`lmstudio/${LMSTUDIO_MODEL}`、未指定時は `lmstudio/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`)。`main` を明示するのは `~/.openclaw/agents/main` セッションディレクトリが doctor 実行時に自動生成されるためで、entry がないと `state integrity` 警告になる。**`agents.defaults.workspace: ~/.openclaw/workspace` を設定**して全 agent (main / official-agent / personal-agent) が同じ Google Drive 配下の workspace を共有させる（agent 単位で明示しないと openclaw は `~/.openclaw/workspace-<agent-id>` を自動生成して別 workspace になる）。**さらに `personal-agent` だけは `sandbox.mode: "all"` + `tools.deny: ["group:web", "browser"]` を per-agent で適用**（35B 規模のローカル LLM は prompt injection 耐性が低いため、`security audit` の CRITICAL 警告に従って web 系 tool を無効化）。`agents.defaults.model` にも同じ Claude Opus + Sonnet fallback を設定し、未バインド agent が OpenClaw 組み込み既定 (`openai/gpt-5.5`) にフォールバックするのを防止
+  - **LM Studio provider**: `models.providers.lmstudio` に OpenAI 互換 API として登録（`baseUrl: http://127.0.0.1:1234/v1`, `api: openai-completions`）。`models[]` には 03 実行時点で LM Studio v0 native API (`http://127.0.0.1:1234/api/v0/models`) から取得した **全ロード可能 LLM/VLM** を `id` / `name` / `contextWindow` (= `max_context_length`) 付きで自動展開する。これによりモデル切り替えは `agents.list[].model` の値を `lmstudio/<modelKey>` に書き換えるだけで完結し、`contextWindow` も対応エントリで自動適用される。新規モデルを `lms get` した場合は 03 を再実行すれば `models[]` に追加される
   - **ルーティング**: top-level `bindings[]` で `accountId: official → official-agent`、`accountId: personal → personal-agent`
   - **オーナー権限**: top-level `commands.ownerAllowFrom: ["telegram:<USER_ID>"]` で owner-only コマンド（`/diagnostics`, `/export-trajectory`, `/config`, exec 承認）を自分の Telegram アカウントに許可
   - **共通**: loopback / token auth / `gateway.trustedProxies: ["127.0.0.1", "::1"]`（loopback 経由の proxy header を信頼） / Tailscale Serve / `exec.security: full` / `tools.deny: []` / `execApprovals: off` / `fs.workspaceOnly: true` / `ssrfPolicy` / `channels.telegram.network.dnsResultOrder: "ipv4first"`（IPv6 経路の polling stall 回避のため IPv4 優先。`autoSelectFamily: false` は Node 22+ で getUpdates timeout cascade を引き起こす既知バグがあるため `true` のまま Happy Eyeballs を有効化） / `channels.telegram.timeoutSeconds: 60`（90s の polling stall threshold より先に HTTP timeout を発火させて zombie 状態を回避） / `channels.telegram.streaming.mode: "partial"` + `streaming.preview.toolProgress: false`（ツール進捗の逐次プレビューを抑止し送信スパムを軽減）
@@ -137,6 +137,7 @@ Screen Sharing 等で claw にログインしてから実行する。
 - `~/.openclaw` 700 / 設定ファイル 600 / Spotlight 除外
 - zsh 補完を `~/.openclaw/completions/openclaw.zsh` に生成し、`~/.zshrc` に source 行を追加（`openclaw completion --shell zsh --install --write-state`）
 - Gateway LaunchAgent 登録 + `OPENCLAW_NO_RESPAWN=1` 注入
+- LM Studio v0 API (`http://127.0.0.1:1234/api/v0/models`) からロード可能な LLM/VLM 一覧を取得し、`models.providers.lmstudio.models[]` に `id` / `name` / `contextWindow` 付きで全展開（API 失敗時は `LMSTUDIO_MODEL` 1 個のみで生成）
 - 最後に `~/.openclaw/openclaw.json.{bak,bak.N,last-good}` を一括削除（Doctor が config 書き換え時に作るが、`~/.openclaw-snapshot-<ts>/` に元 config が残っているため不要）
 
 実行後、Telegram から official / personal の各 Bot に DM して応答が返れば完了。
@@ -153,6 +154,7 @@ agent ID は人格 (Telegram bot identity) に紐付いており、bindings (acc
 "agents": {
   "defaults": {
     "model": { "primary": "anthropic/claude-opus-4-7", "fallbacks": ["anthropic/claude-sonnet-4-6"] },
+    "workspace": "/Users/claw/.openclaw/workspace",
     "sandbox": { "mode": "off" }
   },
   "list": [
@@ -161,7 +163,6 @@ agent ID は人格 (Telegram bot identity) に紐付いており、bindings (acc
     {
       "id": "personal-agent",
       "model": "lmstudio/unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit",
-      "workspace": "/Users/claw/.openclaw/workspace",
       "sandbox": { "mode": "all" },
       "tools": { "deny": ["group:web", "browser"] }
     }
@@ -169,26 +170,33 @@ agent ID は人格 (Telegram bot identity) に紐付いており、bindings (acc
 }
 ```
 
-`model` は文字列 (`"provider/model"`) または `{ primary, fallbacks }` オブジェクトのどちらでも可。`agents.defaults.model` は `agents.list[]` で個別 model 指定の無い agent に適用され、未設定だと OpenClaw は組み込み既定 `openai/gpt-5.5` にフォールバックして OpenAI auth を要求するため、Anthropic に明示する。`openclaw models set` は `agents.defaults.model` を書き換える CLI なので、`agents.list[]` の個別 model を変えたいときは openclaw.json の直接編集が必要。`personal-agent` の `sandbox` / `tools.deny` は per-agent 設定で、`agents.defaults` を上書きする (deny wins)。
+`model` は文字列 (`"provider/model"`) または `{ primary, fallbacks }` オブジェクトのどちらでも可。`agents.defaults.model` は `agents.list[]` で個別 model 指定の無い agent に適用され、未設定だと OpenClaw は組み込み既定 `openai/gpt-5.5` にフォールバックして OpenAI auth を要求するため、Anthropic に明示する。`openclaw models set` は `agents.defaults.model` を書き換える CLI なので、`agents.list[]` の個別 model を変えたいときは openclaw.json の直接編集が必要。`agents.defaults.workspace` で全 agent を `~/.openclaw/workspace` に集約し、`personal-agent` の `sandbox` / `tools.deny` は per-agent 設定で `agents.defaults` を上書きする (deny wins)。
 
 ### LM Studio (ローカル LLM) モデルの差し替え例
 
-Mac Mini 上の LM Studio (`http://127.0.0.1:1234/v1`) は `LMSTUDIO_API_KEY="lm-studio"` がセット済み（`03-openclaw-setup.sh` で `~/.openclaw/.env` に自動投入）。**`personal-agent` のモデルと 01 の `lms get` 対象モデルは `<repo>/.env` の `LMSTUDIO_MODEL` で一括指定**する:
+Mac Mini 上の LM Studio (`http://127.0.0.1:1234/v1`) は `LMSTUDIO_API_KEY="lm-studio"` がセット済み（`03-openclaw-setup.sh` で `~/.openclaw/.env` に自動投入）。`<repo>/.env` の `LMSTUDIO_MODEL` は **01 の `lms get` 対象 + 03 の `agents.list[].personal-agent.model` の初期値**を指定するもので、後から差し替えるモデルに追従する性格のものではない。
+
+#### 既に LM Studio にロードされているモデル間で差し替える
+
+03 実行時点で `models.providers.lmstudio.models[]` に LM Studio v0 API 経由で全 LLM/VLM が `contextWindow` 付きで登録されている。**`~/.openclaw/openclaw.json` の `agents.list[].personal-agent.model` を `lmstudio/<modelKey>` に書き換えて `openclaw gateway restart` するだけ**。`<modelKey>` は `lms ls --json` の `modelKey` か `curl http://127.0.0.1:1234/api/v0/models` の `id` で確認できる。
+
+#### 新しいモデルを追加する
 
 ```bash
-# 1. <repo>/.env の LMSTUDIO_MODEL を書き換え
-#    LMSTUDIO_MODEL="<新しいモデル>"
+# 1. admin として lms get で取得（モデルは admin の ~/.lmstudio/ に保存）
+~/.lmstudio/bin/lms get "<huggingface-url-or-modelKey>"
 
-# 2. 反映 (01 が admin として新モデル取得、03 が claw として openclaw.json 更新)
-./scripts/01-admin-macos-setup.sh   # admin で実行
-./scripts/03-openclaw-setup.sh      # claw で実行
+# 2. claw として 03 を再実行 → models[] に新モデルが contextWindow 付きで追加される
+./scripts/03-openclaw-setup.sh
+
+# 3. agents.list[].personal-agent.model を新モデルに書き換えて restart
 ```
 
-スクリプトを再実行せず手動で反映したい場合は、admin として `lms get <model>`（モデルは admin の `~/.lmstudio/` に保存される）後に claw として `~/.openclaw/openclaw.json` の `agents.list[].model` と `models.providers.lmstudio.models[].id` を直接編集して `openclaw gateway restart`。新モデルは初回呼び出し時に JIT loading でメモリへ自動ロードされる。
+`agents.list[].model` は文字列 (`"provider/model"`) または `{ primary, fallbacks }` オブジェクトのどちらでも可。新モデルは初回呼び出し時に LM Studio の JIT loading でメモリへ自動ロードされる。
 
 ### context window
 
-context window は基本的に LM Studio 側の既定に任せる。文脈不足を感じた場合は `~/.openclaw/openclaw.json` の `models.providers.lmstudio.models[].params.contextLength` を追加して `openclaw gateway restart`。
+各モデルの `contextWindow` は 03 実行時に LM Studio v0 API の `max_context_length` から自動取得して `models.providers.lmstudio.models[].contextWindow` に書き込まれる。明示的に縮める場合のみ手動で値を下げて `openclaw gateway restart`（KV cache のメモリ確保を抑えたいときなど）。
 
 ### 新しい人格 (3 つ目以降の Bot) を追加する場合
 

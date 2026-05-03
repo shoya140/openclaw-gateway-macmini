@@ -247,14 +247,23 @@ setup_lmstudio_get() {
         || error "LM Studio server (127.0.0.1:1234) に接続できません。/Library/LaunchDaemons/io.shoya.lmstudio.plist の起動状態を確認してください"
     info "LM Studio server 起動確認"
 
+    # `lms get` は再実行のたびに再フェッチを試みる (冪等でない) ため、
+    # `lms ls` の出力に対象リポジトリ名が含まれていれば取得済みとみなしてスキップする。
+    if "$lms_bin" ls 2>/dev/null | grep -qF -- "$model"; then
+        success "モデル $model は既にダウンロード済み (lms get をスキップ)"
+        return
+    fi
+
     # `lms get <user>/<repo>` 形式は引数を内部的に小文字化するため、
     # HuggingFace の case-sensitive なリポジトリ名 (例: Qwen3.6-...-MLX-4bit)
     # と一致せず resolve に失敗する。URL 形式で渡すとこの正規化を回避できる。
     local model_url="https://huggingface.co/${model}"
 
-    info "lms get $model_url (既に取得済みの場合は即終了)..."
-    # `lms get` には非対話フラグが無いため、確認プロンプトには yes を流して進める
-    yes | "$lms_bin" get "$model_url" || error "lms get $model_url に失敗しました"
+    info "lms get $model_url を実行します"
+    info "中断したい場合は Ctrl+C → 'Continue in background?' のプロンプトに 'n' で応答してください"
+    # `yes |` でパイプすると Ctrl+C 後の "Continue in background?" にも 'y' が入り
+    # バックグラウンドダウンロードが始まってしまうため、stdin はそのまま渡して対話実行する。
+    "$lms_bin" get "$model_url" || error "lms get $model_url に失敗しました"
     success "モデル $model 用意完了"
 }
 

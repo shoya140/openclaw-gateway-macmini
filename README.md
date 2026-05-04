@@ -162,6 +162,7 @@ Screen Sharing 等で claw にログインしてから実行する。
   - `list[]`: `main` (anthropic/claude-opus-4-7 + sonnet fallback) / `personal` (lmstudio/${LMSTUDIO_MODEL})。`main` は OpenClaw の予約 ID (CLI で add/delete 不可) で、`bindings` に明示的に紐付けて Telegram の `main` アカウント担当として使う。Claude 用に追加 agent を作る必要はない (main で兼ねる)
 - **LM Studio provider**: `baseUrl: http://127.0.0.1:1234/v1`, `api: openai-completions`, `models[]` には 03 実行時点で LM Studio v0 native API から取得した全ロード可能 LLM/VLM を `id` / `name` / `contextWindow` 付きで自動展開 (API 失敗時は `LMSTUDIO_MODEL` 1 個のみ)。新規モデルを `lms get` した場合は 03 を再実行すれば `models[]` に追加される
 - **Bindings**: telegram main → main, telegram personal → personal (`accountId` → `agentId`)
+- **Messages**: `queue.mode: collect` (OpenClaw 2026.4.29 でデフォルトが `steer` に変わり、進行中ランに新メッセージが注入されて「前のメッセージまで含んだ返信」が返るバグを踏むため明示的に `collect` に固定。次ターン開始まで待機する 2026.4.15 当時の挙動)
 - **Owner commands**: `commands.ownerAllowFrom: ["telegram:<USER_ID>"]` で owner-only コマンド (`/diagnostics`, `/export-trajectory`, `/config`, exec 承認) を自分の Telegram アカウントに許可
 - **Logging**: `redactSensitive: tools`
 

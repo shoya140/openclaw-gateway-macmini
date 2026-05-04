@@ -376,7 +376,7 @@ generate_config() {
         "dnsResultOrder": "ipv4first"
       },
       "streaming": {
-        "mode": "partial",
+        "mode": "off",
         "preview": {
           "toolProgress": false
         }
@@ -442,6 +442,11 @@ generate_config() {
       "match": { "channel": "telegram", "accountId": "personal" }
     }
   ],
+  "messages": {
+    "queue": {
+      "mode": "collect"
+    }
+  },
   "session": {
     "dmScope": "per-channel-peer"
   },

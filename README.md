@@ -154,11 +154,17 @@ Screen Sharing 等で claw にログインしてから実行する。
   - `network.dnsResultOrder: ipv4first`, `network.autoSelectFamily: true` (Node 22+ の Happy Eyeballs を有効化)
   - `streaming.mode: partial`, `streaming.preview.toolProgress: false` (ツール進捗の逐次プレビューを抑止して送信スパムを軽減)
 - **Tools**: `profile: coding`, `deny: []`, `fs.workspaceOnly: true`, `exec.security: full`
+- **Loop Detection**: `tools.loopDetection.enabled: true` (デフォルトは false なので明示的に有効化)。LM Studio + Qwen 等のローカルモデルでツール呼び出しが暴走するのを抑止
+  - `historySize: 20`, `warningThreshold: 6`, `criticalThreshold: 12`, `globalCircuitBreakerThreshold: 18`, `unknownToolThreshold: 5`, `postCompactionGuard.windowSize: 2`
+  - 検出器は `genericRepeat` (同一ツール+引数), `knownPollNoProgress` (進捗なしポーリング), `pingPong` (交互呼び出し) の 3 つを全て有効化
+  - 閾値挙動: warning (ログのみ続行) → critical (次のツール呼び出しをブロック) → globalCircuitBreaker (run abort)
+  - `personal` agent は `agents.list[].personal.tools.loopDetection` で per-agent override (warningThreshold=4 / criticalThreshold=8 / globalCircuitBreakerThreshold=12)。Qwen は Claude より遥かにループしやすいため global より厳しく
 - **Browser**: `ssrfPolicy.dangerouslyAllowPrivateNetwork: false`
 - **Agents**:
   - `defaults.model = anthropic/claude-opus-4-7 (+ sonnet fallback)` (未バインド agent が openclaw 組み込み既定 `openai/gpt-5.5` にフォールバックするのを防止)
   - `defaults.workspace = ~/.openclaw/workspace` (全 agent が同じ Google Drive workspace を共有)
   - `defaults.sandbox.mode = off` (Docker 未導入のため personal-agent でも sandbox は無効)
+  - `defaults.timeoutSeconds = 1800` (30 分。OpenClaw 既定の 172800 = 48 時間は Telegram bot 用途には長すぎるため短縮。長時間タスクが必要な場合は引き上げる)
   - `list[]`: `main` (anthropic/claude-opus-4-7 + sonnet fallback) / `personal` (lmstudio/${LMSTUDIO_MODEL})。`main` は OpenClaw の予約 ID (CLI で add/delete 不可) で、`bindings` に明示的に紐付けて Telegram の `main` アカウント担当として使う。Claude 用に追加 agent を作る必要はない (main で兼ねる)
 - **LM Studio provider**: `baseUrl: http://127.0.0.1:1234/v1`, `api: openai-completions`, `models[]` には 03 実行時点で LM Studio v0 native API から取得した全ロード可能 LLM/VLM を `id` / `name` / `contextWindow` 付きで自動展開 (API 失敗時は `LMSTUDIO_MODEL` 1 個のみ)。新規モデルを `lms get` した場合は 03 を再実行すれば `models[]` に追加される
 - **Bindings**: telegram main → main, telegram personal → personal (`accountId` → `agentId`)

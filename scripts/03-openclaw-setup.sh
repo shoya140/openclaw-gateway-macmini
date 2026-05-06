@@ -391,6 +391,22 @@ generate_config() {
     },
     "exec": {
       "security": "full"
+    },
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 20,
+      "warningThreshold": 6,
+      "criticalThreshold": 12,
+      "globalCircuitBreakerThreshold": 18,
+      "unknownToolThreshold": 5,
+      "detectors": {
+        "genericRepeat": true,
+        "knownPollNoProgress": true,
+        "pingPong": true
+      },
+      "postCompactionGuard": {
+        "windowSize": 2
+      }
     }
   },
   "browser": {
@@ -407,7 +423,8 @@ generate_config() {
       "workspace": "${HOME}/.openclaw/workspace",
       "sandbox": {
         "mode": "off"
-      }
+      },
+      "timeoutSeconds": 1800
     },
     "list": [
       {
@@ -419,7 +436,15 @@ generate_config() {
       },
       {
         "id": "personal",
-        "model": "lmstudio/${lmstudio_model}"
+        "model": "lmstudio/${lmstudio_model}",
+        "tools": {
+          "loopDetection": {
+            "enabled": true,
+            "warningThreshold": 4,
+            "criticalThreshold": 8,
+            "globalCircuitBreakerThreshold": 12
+          }
+        }
       }
     ]
   },

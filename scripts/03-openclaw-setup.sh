@@ -417,8 +417,8 @@ generate_config() {
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-opus-4-7",
-        "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        "primary": "openai/gpt-5.5",
+        "fallbacks": ["openai/gpt-5.4-mini"]
       },
       "workspace": "${HOME}/.openclaw/workspace",
       "sandbox": {
@@ -430,8 +430,8 @@ generate_config() {
       {
         "id": "main",
         "model": {
-          "primary": "anthropic/claude-opus-4-7",
-          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+          "primary": "openai/gpt-5.5",
+          "fallbacks": ["openai/gpt-5.4-mini"]
         }
       },
       {
@@ -495,28 +495,27 @@ CONFIGEOF
 # ============================================================
 # シークレット (~/.openclaw/.env)
 # Telegram token は credentials/telegram/*.token 経由のため .env には書かない
+# main agent は ChatGPT Pro Codex サブスク (openai-codex auth profile) で動かすため
+# OpenAI API key は .env に書かない (OAuth credential は OpenClaw が auth store で管理)
 # LMSTUDIO_API_KEY は marker 値 ("lm-studio") をハードコード
+# 後方互換: ANTHROPIC_API_KEY が設定されていれば書き込む (Anthropic に戻す場合に利用)
 # ============================================================
 setup_secrets() {
     step "シークレット設定 (~/.openclaw/.env)"
 
     local env_file="$OPENCLAW_DIR/.env"
 
-    local anthropic_key="${ANTHROPIC_API_KEY:-}"
-    if [[ -n "$anthropic_key" ]]; then
-        info "ANTHROPIC_API_KEY を環境変数から取得"
-    else
-        anthropic_key=$(prompt_secret "Anthropic API Key (sk-ant-...)")
-        [[ -n "$anthropic_key" ]] || error "Anthropic API Key は必須です"
-    fi
-
-    cat > "$env_file" << ENVEOF
-ANTHROPIC_API_KEY="${anthropic_key}"
-LMSTUDIO_API_KEY="lm-studio"
-ENVEOF
+    {
+        printf 'LMSTUDIO_API_KEY="lm-studio"\n'
+        if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+            info "ANTHROPIC_API_KEY を環境変数から取得 (Anthropic に戻す場合の後方互換用)"
+            printf 'ANTHROPIC_API_KEY="%s"\n' "${ANTHROPIC_API_KEY}"
+        fi
+    } > "$env_file"
     chmod 600 "$env_file"
 
-    success "ANTHROPIC_API_KEY と LMSTUDIO_API_KEY を $env_file に書き込み"
+    success "LMSTUDIO_API_KEY を $env_file に書き込み (chmod 600)"
+    info "main agent (openai/gpt-5.5) は OAuth ログインが必要です。完了メッセージの手順を参照してください"
 }
 
 # ============================================================
@@ -634,8 +633,8 @@ OpenClaw Gateway を claw アカウントにセットアップします。
   - Telegram 拡張 peer deps が openclaw に未宣言なら手動 install (動的判定)
   - Telegram Bot Token を ~/.openclaw/credentials/telegram/{main,personal}.token に書き込み
   - Google Drive 上の openclaw-workspace を検出し ~/.openclaw/workspace に symlink
-  - openclaw.json を生成 (Telegram 2 アカウント, main→Claude / personal→LM Studio)
-  - ~/.openclaw/.env に ANTHROPIC_API_KEY と LMSTUDIO_API_KEY を書き込み
+  - openclaw.json を生成 (Telegram 2 アカウント, main→OpenAI Codex / personal→LM Studio)
+  - ~/.openclaw/.env に LMSTUDIO_API_KEY を書き込み (ANTHROPIC_API_KEY は環境にあれば後方互換で追記)
   - パーミッション設定 + Spotlight 除外
   - Gateway LaunchAgent 登録 + OPENCLAW_NO_RESPAWN=1 注入 + 起動
   - openclaw doctor / security audit / status で検証 (read-only)
@@ -646,8 +645,12 @@ OpenClaw Gateway を claw アカウントにセットアップします。
     TELEGRAM_MAIN_BOT_TOKEN      main Bot Token (必須)
     TELEGRAM_PERSONAL_BOT_TOKEN  personal Bot Token (必須)
     TELEGRAM_USER_ID             Telegram User ID 数値 (必須)
-    ANTHROPIC_API_KEY            Anthropic API Key (必須)
     LMSTUDIO_MODEL               personal agent モデル (省略可、既定: unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit)
+    ANTHROPIC_API_KEY            (省略可) Anthropic に戻す場合の後方互換用。設定すれば .env に書き込みます
+
+main agent (openai/gpt-5.5) は ChatGPT Pro サブスクの OAuth 認証を使用するため、03 完了後に
+device-code フローでログインしてください:
+    openclaw models auth login --provider openai-codex --device-code
 USAGE
 }
 
@@ -684,6 +687,14 @@ main() {
 
     echo
     step "OpenClaw Setup 完了"
+    info ""
+    info "次の手動作業: main agent (openai/gpt-5.5) の OAuth ログイン (ChatGPT Pro サブスク経由)"
+    info "  1. claw ユーザーで以下を実行:"
+    info "       openclaw models auth login --provider openai-codex --device-code"
+    info "  2. 表示された URL とユーザーコードを別マシンのブラウザで開く"
+    info "  3. ChatGPT Pro アカウントでサインイン → コードを承認"
+    info "  4. ログイン完了後、LaunchAgent を再ロード:"
+    info "       launchctl kickstart -k gui/$(id -u)/${LAUNCHAGENT_LABEL}"
     info ""
     info "Telegram から main / personal の各 Bot に DM を送って応答が返れば完了です。"
     info ""

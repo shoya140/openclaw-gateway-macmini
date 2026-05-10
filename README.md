@@ -128,9 +128,9 @@ Screen Sharing 等で claw にログインしてから実行。
 - **Tools**: `profile: coding`, `deny: []`, `fs.workspaceOnly: true`, `exec.security: full`
 - **Loop Detection**: `tools.loopDetection.enabled: true` (デフォルトは false)。LM Studio + Qwen 等のローカルモデルでツール呼び出しが暴走するのを抑止。`personal` agent は per-agent override で global より厳しい閾値 (Qwen は GPT-5.5 より遥かにループしやすい)
 - **Agents**:
-  - `defaults.model = openai/gpt-5.5 (+ openai/gpt-5.4-mini fallback)`、`defaults.workspace = ~/.openclaw/workspace`、`defaults.sandbox.mode = off` (Docker 未導入)
+  - `defaults.model = openai-codex/gpt-5.5 (+ openai-codex/gpt-5.4-mini fallback)`、`defaults.workspace = ~/.openclaw/workspace`、`defaults.sandbox.mode = off` (Docker 未導入)
   - `defaults.timeoutSeconds = 1800` (30 分。OpenClaw 既定の 48 時間は Telegram bot 用途には長すぎる)
-  - `list[]`: `main` (`openai/gpt-5.5` + fallback、ChatGPT Pro OAuth) / `personal` (`lmstudio/${LMSTUDIO_MODEL}`)
+  - `list[]`: `main` (`openai-codex/gpt-5.5` + fallback、ChatGPT Pro OAuth) / `personal` (`lmstudio/${LMSTUDIO_MODEL}`)
 - **OpenAI provider**: `models.providers.openai-codex` block は不要 (auth profile 切替のみで native Codex runtime が自動選択)。OAuth credential は OpenClaw が `~/.openclaw` 配下の auth store で管理 (パス公式未公開)
 - **LM Studio provider**: `baseUrl: http://127.0.0.1:1234/v1` + `api: openai-completions`。`models[]` は LM Studio v0 native API (`/api/v0/models`) からロード可能な全 LLM/VLM を `id` / `name` / `contextWindow` 付きで自動展開 (API 失敗時は `LMSTUDIO_MODEL` 1 個のみ)。新規モデル追加時は 03 を再実行
 - **Bindings**: telegram main → main, telegram personal → personal
@@ -174,7 +174,7 @@ agent ID は人格 (Telegram bot identity) に紐付いており、bindings (acc
 ```jsonc
 "agents": {
   "list": [
-    { "id": "main",     "model": { "primary": "openai/gpt-5.5", "fallbacks": ["openai/gpt-5.4-mini"] } },
+    { "id": "main",     "model": { "primary": "openai-codex/gpt-5.5", "fallbacks": ["openai-codex/gpt-5.4-mini"] } },
     { "id": "personal", "model": "lmstudio/<modelKey>" }
   ]
 }

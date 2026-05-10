@@ -417,8 +417,8 @@ generate_config() {
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-5.5",
-        "fallbacks": ["openai/gpt-5.4-mini"]
+        "primary": "openai-codex/gpt-5.5",
+        "fallbacks": ["openai-codex/gpt-5.4-mini"]
       },
       "workspace": "${HOME}/.openclaw/workspace",
       "sandbox": {
@@ -430,8 +430,8 @@ generate_config() {
       {
         "id": "main",
         "model": {
-          "primary": "openai/gpt-5.5",
-          "fallbacks": ["openai/gpt-5.4-mini"]
+          "primary": "openai-codex/gpt-5.5",
+          "fallbacks": ["openai-codex/gpt-5.4-mini"]
         }
       },
       {
@@ -515,7 +515,7 @@ setup_secrets() {
     chmod 600 "$env_file"
 
     success "LMSTUDIO_API_KEY を $env_file に書き込み (chmod 600)"
-    info "main agent (openai/gpt-5.5) は OAuth ログインが必要です。完了メッセージの手順を参照してください"
+    info "main agent (openai-codex/gpt-5.5) は OAuth ログインが必要です。完了メッセージの手順を参照してください"
 }
 
 # ============================================================
@@ -648,7 +648,7 @@ OpenClaw Gateway を claw アカウントにセットアップします。
     LMSTUDIO_MODEL               personal agent モデル (省略可、既定: unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit)
     ANTHROPIC_API_KEY            (省略可) Anthropic に戻す場合の後方互換用。設定すれば .env に書き込みます
 
-main agent (openai/gpt-5.5) は ChatGPT Pro サブスクの OAuth 認証を使用するため、03 完了後に
+main agent (openai-codex/gpt-5.5) は ChatGPT Pro サブスクの OAuth 認証を使用するため、03 完了後に
 device-code フローでログインしてください:
     openclaw models auth login --provider openai-codex --method device-code
 USAGE
@@ -688,7 +688,7 @@ main() {
     echo
     step "OpenClaw Setup 完了"
     info ""
-    info "次の手動作業: main agent (openai/gpt-5.5) の OAuth ログイン (ChatGPT Pro サブスク経由)"
+    info "次の手動作業: main agent (openai-codex/gpt-5.5) の OAuth ログイン (ChatGPT Pro サブスク経由)"
     info "  1. claw ユーザーで以下を実行:"
     info "       openclaw models auth login --provider openai-codex --method device-code"
     info "  2. 表示された URL とユーザーコードを別マシンのブラウザで開く"

@@ -50,7 +50,7 @@ Mac Mini に OpenClaw をインストールし、Telegram から main (OpenAI GP
 ./scripts/03-openclaw-setup.sh
 
 # 3. main agent の OAuth ログイン (別マシンのブラウザで device code を入力)
-openclaw models auth login --provider openai-codex --device-code
+openclaw models auth login --provider openai-codex --method device-code
 
 # 4. LaunchAgent を再ロードして OAuth credential を反映
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
@@ -306,7 +306,7 @@ launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 | `openclaw.json` | 設定 | 通常は新生成を使う。`gateway.auth.token` を引き継ぐ場合は token 値だけ抜き出して新 config に書き戻し |
 | `openclaw.json.{bak,bak.*,last-good}`, `logs/` | 履歴・キャッシュ | 復元しない |
 
-`openai-codex` の OAuth credential は `~/.openclaw` 配下の auth store に保存されますが、保存パスは公式未公開です。`identity` を含む `~/.openclaw` 全体を `cp -a` で復元しても credential が拾われない場合は、再度 `openclaw models auth login --provider openai-codex --device-code` でログインし直してください。
+`openai-codex` の OAuth credential は `~/.openclaw` 配下の auth store に保存されますが、保存パスは公式未公開です。`identity` を含む `~/.openclaw` 全体を `cp -a` で復元しても credential が拾われない場合は、再度 `openclaw models auth login --provider openai-codex --method device-code` でログインし直してください。
 
 復元後は LaunchAgent を再ロード。動作確認できたら `rm -rf "$SNAP"`。
 

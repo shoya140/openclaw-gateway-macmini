@@ -650,7 +650,7 @@ OpenClaw Gateway を claw アカウントにセットアップします。
 
 main agent (openai/gpt-5.5) は ChatGPT Pro サブスクの OAuth 認証を使用するため、03 完了後に
 device-code フローでログインしてください:
-    openclaw models auth login --provider openai-codex --device-code
+    openclaw models auth login --provider openai-codex --method device-code
 USAGE
 }
 
@@ -690,7 +690,7 @@ main() {
     info ""
     info "次の手動作業: main agent (openai/gpt-5.5) の OAuth ログイン (ChatGPT Pro サブスク経由)"
     info "  1. claw ユーザーで以下を実行:"
-    info "       openclaw models auth login --provider openai-codex --device-code"
+    info "       openclaw models auth login --provider openai-codex --method device-code"
     info "  2. 表示された URL とユーザーコードを別マシンのブラウザで開く"
     info "  3. ChatGPT Pro アカウントでサインイン → コードを承認"
     info "  4. ログイン完了後、LaunchAgent を再ロード:"
